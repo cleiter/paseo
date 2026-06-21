@@ -194,7 +194,7 @@ function QuestionNavButton({
 
   return (
     <Pressable
-      accessibilityRole="button"
+      accessibilityRole="tab"
       accessibilityLabel={`Question ${index + 1} of ${total}`}
       accessibilityState={accessibilityState}
       aria-selected={isActive}
@@ -237,7 +237,11 @@ function QuestionNav({
     return null;
   }
   return (
-    <View style={styles.questionNav} testID="question-form-question-nav">
+    <View
+      style={styles.questionNav}
+      testID="question-form-question-nav"
+      accessibilityRole="tablist"
+    >
       {questions.map((question, qIndex) => (
         <QuestionNavButton
           key={question.header}

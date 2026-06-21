@@ -10,9 +10,10 @@ export async function expectCurrentQuestion(
 ): Promise<void> {
   const card = page.getByTestId("question-form-card").first();
   await expect(card.getByTestId("question-form-current-question")).toHaveText(input.question);
-  await expect(
-    card.getByRole("button", { name: `Question ${input.index} of ${input.total}` }),
-  ).toHaveAttribute("aria-selected", "true");
+  // Nav tabs only render for multi-question cards (hidden for a lone question).
+  if (input.total > 1) {
+    await expect(questionNavTab(page, input)).toHaveAttribute("aria-selected", "true");
+  }
 }
 
 export async function expectQuestionHidden(page: Page, question: string): Promise<void> {
@@ -24,6 +25,14 @@ export async function expectQuestionHidden(page: Page, question: string): Promis
 function questionOption(page: Page, option: string) {
   const card = page.getByTestId("question-form-card").first();
   return card.getByRole("radio", { name: option }).or(card.getByRole("checkbox", { name: option }));
+}
+
+// The multi-question nav renders as a tablist; each question is a tab.
+function questionNavTab(page: Page, input: { index: number; total: number }) {
+  return page
+    .getByTestId("question-form-card")
+    .first()
+    .getByRole("tab", { name: `Question ${input.index} of ${input.total}` });
 }
 
 export async function chooseQuestionOption(page: Page, option: string): Promise<void> {
@@ -38,23 +47,14 @@ export async function openQuestion(
   page: Page,
   input: { index: number; total: number },
 ): Promise<void> {
-  await page
-    .getByTestId("question-form-card")
-    .first()
-    .getByRole("button", { name: `Question ${input.index} of ${input.total}` })
-    .click();
+  await questionNavTab(page, input).click();
 }
 
 export async function expectQuestionNavigationEnabled(
   page: Page,
   input: { index: number; total: number },
 ): Promise<void> {
-  await expect(
-    page
-      .getByTestId("question-form-card")
-      .first()
-      .getByRole("button", { name: `Question ${input.index} of ${input.total}` }),
-  ).toBeEnabled();
+  await expect(questionNavTab(page, input)).toBeEnabled();
 }
 
 export async function fillQuestionAnswer(
