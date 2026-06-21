@@ -19,18 +19,19 @@ export async function expectQuestionHidden(page: Page, question: string): Promis
   await expect(page.getByText(question, { exact: true })).toHaveCount(0);
 }
 
+// Options render as radios (single-select) or checkboxes (multi-select), so match
+// either role by accessible name.
+function questionOption(page: Page, option: string) {
+  const card = page.getByTestId("question-form-card").first();
+  return card.getByRole("radio", { name: option }).or(card.getByRole("checkbox", { name: option }));
+}
+
 export async function chooseQuestionOption(page: Page, option: string): Promise<void> {
-  await page
-    .getByTestId("question-form-card")
-    .first()
-    .getByRole("button", { name: option })
-    .click();
+  await questionOption(page, option).click();
 }
 
 export async function expectQuestionOptionSelected(page: Page, option: string): Promise<void> {
-  await expect(
-    page.getByTestId("question-form-card").first().getByRole("button", { name: option }),
-  ).toHaveAttribute("aria-selected", "true");
+  await expect(questionOption(page, option)).toHaveAttribute("aria-checked", "true");
 }
 
 export async function openQuestion(
