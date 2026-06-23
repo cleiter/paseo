@@ -201,6 +201,9 @@ export const ar: TranslationResources = {
       implement: "ينفذ",
       question: "كيف تريد المتابعة؟",
       proposedPlan: "الخطة المقترحة",
+      planApproved: "تمت الموافقة",
+      planRejected: "مرفوض",
+      planDismissed: "تم التجاهل",
     },
   },
   agentPanel: {

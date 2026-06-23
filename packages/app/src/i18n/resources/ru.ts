@@ -201,6 +201,9 @@ export const ru: TranslationResources = {
       implement: "Осуществлять",
       question: "Как бы вы хотели продолжить?",
       proposedPlan: "Предлагаемый план",
+      planApproved: "Одобрено",
+      planRejected: "Отклонено",
+      planDismissed: "Отменено",
     },
   },
   agentPanel: {
