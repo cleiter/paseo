@@ -208,6 +208,12 @@ export const ar: TranslationResources = {
   sessions: {
     title: "السجل",
     empty: "لا توجد جلسات بعد",
+    search: {
+      placeholder: "البحث في السجل",
+      clear: "مسح البحث",
+      noResults: "لا توجد جلسات مطابقة",
+      loadMoreHint: "تحميل المزيد للبحث في الجلسات الأقدم",
+    },
     actions: {
       loadMore: "تحميل المزيد",
     },

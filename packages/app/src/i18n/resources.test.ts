@@ -297,6 +297,10 @@ describe("translation resources", () => {
     expect(en.sessions.title).toBe("History");
     expect(en.sessions.empty).toBe("No sessions yet");
     expect(en.sessions.actions.loadMore).toBe("Load more");
+    expect(en.sessions.search.placeholder).toBe("Search history");
+    expect(en.sessions.search.clear).toBe("Clear search");
+    expect(en.sessions.search.noResults).toBe("No matching sessions");
+    expect(en.sessions.search.loadMoreHint).toBe("Load more to search older sessions");
     expect(en.agentList.fallbackTitle).toBe("New session");
     expect(en.agentList.dateSections.today).toBe("Today");
     expect(en.agentList.dateSections.older).toBe("Older");

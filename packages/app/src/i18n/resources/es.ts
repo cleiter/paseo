@@ -211,6 +211,12 @@ export const es: TranslationResources = {
   sessions: {
     title: "Historial",
     empty: "Aún no hay sesiones",
+    search: {
+      placeholder: "Buscar en el historial",
+      clear: "Borrar búsqueda",
+      noResults: "No hay sesiones coincidentes",
+      loadMoreHint: "Cargar más para buscar sesiones anteriores",
+    },
     actions: {
       loadMore: "Cargar más",
     },

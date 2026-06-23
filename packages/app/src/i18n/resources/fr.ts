@@ -211,6 +211,12 @@ export const fr: TranslationResources = {
   sessions: {
     title: "Historique",
     empty: "Aucune séance pour l'instant",
+    search: {
+      placeholder: "Rechercher dans l'historique",
+      clear: "Effacer la recherche",
+      noResults: "Aucune séance correspondante",
+      loadMoreHint: "Charger plus pour rechercher d'anciennes séances",
+    },
     actions: {
       loadMore: "Charger plus",
     },
