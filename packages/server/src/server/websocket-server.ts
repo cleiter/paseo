@@ -51,7 +51,8 @@ import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
 } from "@getpaseo/protocol/agent-attention-notification";
-import { createGitHubService, type ForgeService } from "../services/github-service.js";
+import { resolveForgeService } from "../services/forge-resolver.js";
+import { type ForgeService } from "../services/github-service.js";
 import {
   extractWsBearerProtocol,
   extractWsBearerToken,
@@ -513,7 +514,7 @@ export class VoiceAssistantWebSocketServer {
     this.loopService = requiredServices.loopService;
     this.scheduleService = requiredServices.scheduleService;
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
-    this.github = github ?? createGitHubService();
+    this.github = github ?? resolveForgeService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;

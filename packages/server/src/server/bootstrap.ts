@@ -90,7 +90,7 @@ function formatListenTarget(listenTarget: ListenTarget | null): string | null {
 }
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
-import { createGitHubService } from "../services/github-service.js";
+import { resolveForgeService } from "../services/forge-resolver.js";
 import {
   createPaseoWorktree as createRegisteredPaseoWorktree,
   createLocalCheckoutWorkspace,
@@ -704,7 +704,7 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     logger,
   });
-  const github = createGitHubService();
+  const github = resolveForgeService();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
     paseoHome: config.paseoHome,

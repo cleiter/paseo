@@ -10,13 +10,13 @@ import {
   GitHubAuthenticationError,
   GitHubCliMissingError,
   GitHubCommandError,
-  createGitHubService,
   resolveGitHubRepo,
   type GitHubCurrentPullRequestStatus,
   type GitHubPullRequestStatusFacts,
   type ForgeService,
   type PullRequestMergeable,
 } from "../services/github-service.js";
+import { resolveForgeService } from "../services/forge-resolver.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
@@ -2982,7 +2982,7 @@ export type ReviewDecision = "approved" | "changes_requested" | "pending" | null
 export async function createPullRequest(
   cwd: string,
   options: CreatePullRequestOptions,
-  github: ForgeService = createGitHubService(),
+  github: ForgeService = resolveForgeService(),
   context?: CheckoutContext,
 ): Promise<{ url: string; number: number }> {
   await requireGitRepo(cwd);
@@ -3021,7 +3021,7 @@ export async function createPullRequest(
 
 export async function getPullRequestStatus(
   cwd: string,
-  github: ForgeService = createGitHubService(),
+  github: ForgeService = resolveForgeService(),
   options?: CheckoutReadCacheOptions,
   context?: CheckoutContext,
 ): Promise<PullRequestStatusResult> {

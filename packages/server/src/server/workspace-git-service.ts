@@ -24,11 +24,11 @@ import {
   resolveAbsoluteGitDir,
 } from "../utils/checkout-git.js";
 import {
-  createGitHubService,
   type GitHubPullRequestStatusFacts,
   type ForgeService,
   type PullRequestMergeable,
 } from "../services/github-service.js";
+import { resolveForgeService } from "../services/forge-resolver.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { resolveGitHubRemote, type GitHubRemoteIdentity } from "../utils/github-remote.js";
@@ -336,7 +336,7 @@ function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies 
     resolveRepositoryDefaultBranch,
     listBranchSuggestions,
     listPaseoWorktrees,
-    github: createGitHubService(),
+    github: resolveForgeService(),
     resolveAbsoluteGitDir,
     hasOriginRemote,
     runGitFetch,
