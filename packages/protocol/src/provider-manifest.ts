@@ -37,18 +37,18 @@ export interface AgentProviderDefinition {
 
 const CLAUDE_MODES: AgentProviderModeDefinition[] = [
   {
+    id: "plan",
+    label: "Plan Mode",
+    description: "Analyze the codebase without executing tools or edits",
+    icon: "ShieldEllipsis",
+    colorTier: "planning",
+  },
+  {
     id: "default",
     label: "Always Ask",
     description: "Prompts for permission the first time a tool is used",
     icon: "Shield",
     colorTier: "safe",
-  },
-  {
-    id: "auto",
-    label: "Auto mode",
-    description: "Uses a model classifier to review permission prompts automatically",
-    icon: "ShieldCheck",
-    colorTier: "moderate",
   },
   {
     id: "acceptEdits",
@@ -58,11 +58,11 @@ const CLAUDE_MODES: AgentProviderModeDefinition[] = [
     colorTier: "moderate",
   },
   {
-    id: "plan",
-    label: "Plan Mode",
-    description: "Analyze the codebase without executing tools or edits",
-    icon: "ShieldEllipsis",
-    colorTier: "planning",
+    id: "auto",
+    label: "Auto mode",
+    description: "Uses a model classifier to review permission prompts automatically",
+    icon: "ShieldCheck",
+    colorTier: "moderate",
   },
   {
     id: "bypassPermissions",
