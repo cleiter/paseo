@@ -4042,11 +4042,17 @@ export class AgentManager {
     } catch (error) {
       // A malformed `agentEnv` fails the launch: silently dropping it would start the agent
       // with a partial environment, which resurfaces as an unexplained auth failure inside an
-      // MCP server. Any OTHER paseo.json problem is surfaced during worktree setup, so don't
-      // block every agent launch on it here.
+      // MCP server. Any OTHER paseo.json problem (bad JSON, say) is surfaced during worktree
+      // setup, so it must not block every agent launch — but it does mean this agent starts
+      // without its configured environment, so leave a trace at the moment it happens rather
+      // than letting the developer discover it via a puzzled MCP server later.
       if (error instanceof AgentEnvConfigError) {
         throw error;
       }
+      this.logger.warn(
+        { cwd, err: error },
+        "Could not read agentEnv from paseo.json; starting the agent without it",
+      );
       return { ...worktreeEnv, ...requestEnv };
     }
     if (layers.length === 0) {

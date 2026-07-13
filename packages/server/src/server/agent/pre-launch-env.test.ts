@@ -84,6 +84,7 @@ describe("resolveAgentEnvVars", () => {
   let fixtureDir: string;
   let printsFoo: string;
   let printsPath: string;
+  let dumpsEnv: string;
   let failing: string;
 
   // PowerShell treats a quoted path in command position as a string EXPRESSION, not an
@@ -107,6 +108,15 @@ describe("resolveAgentEnvVars", () => {
     writeFileSync(
       printsPath,
       'process.stdout.write(JSON.stringify({ SAW: process.env.LAYER_ONE ?? "missing" }));',
+    );
+
+    // Prints the WHOLE environment, changing exactly one variable — the shape `direnv exec . env`
+    // and `mise env --json` actually produce. This is what exercises the delta filter: a command
+    // that only prints one key can never re-inject a daemon var, so it proves nothing.
+    dumpsEnv = join(fixtureDir, "dumps-env.cjs");
+    writeFileSync(
+      dumpsEnv,
+      'process.stdout.write(JSON.stringify({ ...process.env, HOOK_CHANGED: "yes" }));',
     );
 
     failing = join(fixtureDir, "fails.cjs");
@@ -164,22 +174,32 @@ describe("resolveAgentEnvVars", () => {
     expect(env.SAW).toBe("visible");
   });
 
-  it("exposes the runtime env to the command but injects only what the command changed", async () => {
-    process.env.PASEO_PRELAUNCH_BASELINE = "untouched";
-    try {
-      const env = await resolveAgentEnvVars({
-        layers: [{ kind: "command", command: nodeCommand(printsPath) }],
-        cwd: process.cwd(),
-        runtimeEnv: { LAYER_ONE: "from-runtime" },
-      });
-      // The command read the runtime var...
-      expect(env.SAW).toBe("from-runtime");
-      // ...but neither the runtime var nor an untouched daemon var is re-injected.
-      expect(env.LAYER_ONE).toBeUndefined();
-      expect(env.PASEO_PRELAUNCH_BASELINE).toBeUndefined();
-    } finally {
-      delete process.env.PASEO_PRELAUNCH_BASELINE;
-    }
+  it("exposes the runtime env to the command", async () => {
+    const env = await resolveAgentEnvVars({
+      layers: [{ kind: "command", command: nodeCommand(printsPath) }],
+      cwd: process.cwd(),
+      runtimeEnv: { LAYER_ONE: "from-runtime" },
+    });
+    expect(env.SAW).toBe("from-runtime");
+  });
+
+  it("injects only what a command changed, not the whole environment it printed", async () => {
+    const env = await resolveAgentEnvVars({
+      layers: [{ kind: "command", command: nodeCommand(dumpsEnv) }],
+      cwd: process.cwd(),
+      runtimeEnv: { LAYER_ONE: "from-runtime" },
+    });
+
+    // The command printed its entire environment. Only the variable it actually changed is
+    // injected — otherwise the daemon's whole env would land on the agent and clobber a user's
+    // per-provider runtimeSettings.env for unrelated keys like PATH.
+    expect(env.HOOK_CHANGED).toBe("yes");
+    expect(env.PATH).toBeUndefined();
+    expect(env.HOME ?? env.USERPROFILE).toBeUndefined();
+    expect(env.LAYER_ONE).toBeUndefined();
+    // Shell bookkeeping the login shell sets on its own is noise, not environment.
+    expect(env.PWD).toBeUndefined();
+    expect(env.SHLVL).toBeUndefined();
   });
 
   it("throws PreLaunchEnvError when a command layer exits non-zero", async () => {
