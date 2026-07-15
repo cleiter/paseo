@@ -9,7 +9,7 @@ import type { ToastApi } from "@/components/toast-host";
 import type { InlinePathTarget } from "./parse";
 import { AssistantFileLinkResolverProvider } from "./provider";
 import type { DirectorySuggestionResult } from "./resolver";
-import { useFileLink } from "./use-file-link";
+import { useAssistantFileLinkActions, useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 
 vi.mock("@/utils/open-external-url", () => ({
@@ -327,3 +327,39 @@ describe("useFileLink", () => {
 });
 
 const WorkspaceSwitchContext = React.createContext<(workspaceRoot: string) => void>(() => {});
+
+describe("useAssistantFileLinkActions slash commands", () => {
+  function createActionsWrapper(input: { isSlashCommand?: (name: string) => boolean }) {
+    const queryClient = createQueryClient();
+    return function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <AssistantFileLinkResolverProvider
+            serverId="server-1"
+            workspaceRoot="/Users/test/project"
+            isSlashCommand={input.isSlashCommand}
+          >
+            {children}
+          </AssistantFileLinkResolverProvider>
+        </QueryClientProvider>
+      );
+    };
+  }
+
+  it("matches known command names and defaults to false", () => {
+    const { result } = renderHook(() => useAssistantFileLinkActions(), {
+      wrapper: createActionsWrapper({ isSlashCommand: (name) => name === "autoplan" }),
+    });
+
+    expect(result.current.isSlashCommand("autoplan")).toBe(true);
+    expect(result.current.isSlashCommand("nope")).toBe(false);
+  });
+
+  it("returns false when no matcher is configured", () => {
+    const { result } = renderHook(() => useAssistantFileLinkActions(), {
+      wrapper: createActionsWrapper({}),
+    });
+
+    expect(result.current.isSlashCommand("autoplan")).toBe(false);
+  });
+});

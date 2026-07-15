@@ -23,6 +23,10 @@ export interface AssistantFileLinkResolverConfig {
   workspaceRoot?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
   toast?: ToastApi | null;
+  // Recognizes a leading-slash inline-code token (bare command name, no slash)
+  // as a known slash command / skill for the current agent, so the code_inline
+  // rule can render it as a command chip instead of a file link.
+  isSlashCommand?: (name: string) => boolean;
 }
 
 export interface AssistantFileLinkResolverProviderProps extends AssistantFileLinkResolverConfig {
@@ -43,6 +47,7 @@ export function AssistantFileLinkResolverProvider({
   workspaceRoot,
   onOpenWorkspaceFile,
   toast,
+  isSlashCommand,
   children,
 }: AssistantFileLinkResolverProviderProps) {
   const configRef = useRef<AssistantFileLinkResolverConfig>({
@@ -51,8 +56,16 @@ export function AssistantFileLinkResolverProvider({
     workspaceRoot,
     onOpenWorkspaceFile,
     toast,
+    isSlashCommand,
   });
-  configRef.current = { client, serverId, workspaceRoot, onOpenWorkspaceFile, toast };
+  configRef.current = {
+    client,
+    serverId,
+    workspaceRoot,
+    onOpenWorkspaceFile,
+    toast,
+    isSlashCommand,
+  };
 
   const getDirectorySuggestions = useCallback<GetDirectorySuggestions>(async (input) => {
     const activeClient = configRef.current.client;
