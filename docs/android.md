@@ -35,13 +35,23 @@ mise install        # java 21 + android-sdk 21.0 command-line tools
 
 > **Pin a real `android-sdk` version, not `latest`.** The mise `android-sdk` plugin's `latest` resolved to the ancient `1.0` bundle, whose `sdkmanager` (3.6.0) predates the `emulator` package and fails with `Failed to find package emulator`. `21.0` ships a current `sdkmanager`. If you bump it, update the version in `.tool-versions` and in all four paths in `.mise.toml`.
 
-`mise install` only lays down the command-line tools. Install the rest and create an emulator — Apple Silicon uses `arm64-v8a` system images (use `x86_64` on Intel):
+`mise install` only lays down the command-line tools. Install the rest and create an emulator. On Apple Silicon:
 
 ```bash
 sdkmanager --licenses
 sdkmanager "platform-tools" "emulator" "platforms;android-35" "build-tools;35.0.0" \
            "system-images;android-35;google_apis;arm64-v8a"
 avdmanager create avd -n paseo -k "system-images;android-35;google_apis;arm64-v8a" -d pixel_7
+emulator @paseo     # start it; leave running
+```
+
+On an Intel Mac, use the `x86_64` system image:
+
+```bash
+sdkmanager --licenses
+sdkmanager "platform-tools" "emulator" "platforms;android-35" "build-tools;35.0.0" \
+           "system-images;android-35;google_apis;x86_64"
+avdmanager create avd -n paseo -k "system-images;android-35;google_apis;x86_64" -d pixel_7
 emulator @paseo     # start it; leave running
 ```
 
