@@ -90,6 +90,10 @@ describe("preload sandbox safety", () => {
   it("inlines the browser profile partition instead of importing it", () => {
     const source = readFileSync(preloadPath, "utf8");
     const match = source.match(/const\s+PASEO_BROWSER_PROFILE_PARTITION\s*=\s*"([^"]+)"/);
-    expect(match?.[1]).toBe(PASEO_BROWSER_PROFILE_PARTITION);
+    expect(
+      match,
+      "PASEO_BROWSER_PROFILE_PARTITION not found as a double-quoted string literal in preload.ts",
+    ).not.toBeNull();
+    expect(match![1]).toBe(PASEO_BROWSER_PROFILE_PARTITION);
   });
 });
