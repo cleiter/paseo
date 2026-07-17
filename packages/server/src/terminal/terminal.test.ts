@@ -679,15 +679,15 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
       }),
     );
     const promptStates: boolean[] = [];
-    const unsubscribePromptReady = session.onPromptStateChange((atPrompt) => {
-      promptStates.push(atPrompt);
+    const unsubscribePromptReady = session.onPromptStateChange((state) => {
+      promptStates.push(state.atPrompt);
     });
 
     await waitForLines(session, ["$"]);
-    expect(session.isAtPrompt()).toBe(false);
+    expect(session.getPromptState().atPrompt).toBe(false);
 
     session.send({ type: "input", data: "./emit-prompt-ready.sh\r" });
-    await waitForState(session, () => session.isAtPrompt());
+    await waitForState(session, () => session.getPromptState().atPrompt);
 
     expect(promptStates).toEqual([true]);
     expect(getLines(session.getState()).join("\n")).not.toContain("633;R");
@@ -715,8 +715,8 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
       }),
     );
     const promptStates: boolean[] = [];
-    const unsubscribePromptReady = session.onPromptStateChange((atPrompt) => {
-      promptStates.push(atPrompt);
+    const unsubscribePromptReady = session.onPromptStateChange((state) => {
+      promptStates.push(state.atPrompt);
     });
     const commandCompletions: Array<number | null> = [];
     const unsubscribeCommandFinished = session.onCommandFinished((info) => {
@@ -731,7 +731,7 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
     await waitForState(session, () => commandCompletions.length === 1);
 
     expect(promptStates).toEqual([]);
-    expect(session.isAtPrompt()).toBe(false);
+    expect(session.getPromptState().atPrompt).toBe(false);
 
     unsubscribePromptReady();
     unsubscribeCommandFinished();
@@ -744,7 +744,7 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
     writeFileSync(readyScript, '#!/bin/sh\nprintf "\\033]633;R;$PASEO_TERMINAL_NONCE\\007"\n');
     chmodSync(readyScript, 0o755);
     const execScript = join(packageRoot, "emit-command-started.sh");
-    writeFileSync(execScript, "#!/bin/sh\nprintf '\\033]633;C\\007'\n");
+    writeFileSync(execScript, '#!/bin/sh\nprintf "\\033]633;C;$PASEO_TERMINAL_NONCE\\007"\n');
     chmodSync(execScript, 0o755);
 
     const session = trackSession(
@@ -758,12 +758,12 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
 
     await waitForLines(session, ["$"]);
     session.send({ type: "input", data: "./emit-prompt-ready.sh\r" });
-    await waitForState(session, () => session.isAtPrompt());
+    await waitForState(session, () => session.getPromptState().atPrompt);
 
     session.send({ type: "input", data: "./emit-command-started.sh\r" });
-    await waitForState(session, () => !session.isAtPrompt());
+    await waitForState(session, () => !session.getPromptState().atPrompt);
 
-    expect(session.isAtPrompt()).toBe(false);
+    expect(session.getPromptState().atPrompt).toBe(false);
   });
 
   it("debounces rapid title changes and emits only the final title", async () => {
@@ -939,12 +939,12 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
     );
 
     expect(session.shellIntegrationExpected).toBe(true);
-    await waitForState(session, () => session.isAtPrompt());
+    await waitForState(session, () => session.getPromptState().atPrompt);
 
     // Running a command hands stdin to it, so the editor no longer owns the line.
     session.send({ type: "input", data: "sleep 0.4\r" });
-    await waitForState(session, () => !session.isAtPrompt());
-    await waitForState(session, () => session.isAtPrompt());
+    await waitForState(session, () => !session.getPromptState().atPrompt);
+    await waitForState(session, () => session.getPromptState().atPrompt);
   });
 
   it.skipIf(!hasZsh)("stays off-prompt while zsh startup blocks on input", async () => {
@@ -974,10 +974,10 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
       getLines(session.getState()).join("\n").includes("update? [Y/n]"),
     );
     // The shell has printed, but `read` owns stdin — not the line editor.
-    expect(session.isAtPrompt()).toBe(false);
+    expect(session.getPromptState().atPrompt).toBe(false);
 
     session.send({ type: "input", data: "n" });
-    await waitForState(session, () => session.isAtPrompt());
+    await waitForState(session, () => session.getPromptState().atPrompt);
   });
 
   it("clears already scheduled OSC title debounce timers when setting a user title", async () => {

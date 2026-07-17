@@ -60,6 +60,10 @@ const WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS = 1_500;
 // How long to wait for an integrated shell to reach its line editor. Generous:
 // it covers slow rc files, and the cost of being wrong is a corrupted command.
 const TERMINAL_PROMPT_READY_TIMEOUT_MS = 15_000;
+// How long to wait for a shell to announce its integration before concluding it
+// has none. The announce is emitted from our .zshenv wrapper before any user rc
+// file runs, so this only has to cover zsh reaching its first sourced line.
+const TERMINAL_INTEGRATION_ANNOUNCE_GRACE_MS = WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS;
 
 interface MiddleTruncationAccumulator {
   totalBytes: number;
@@ -455,7 +459,7 @@ type ReadinessTerminal = Pick<
   | "getState"
   | "subscribe"
   | "shellIntegrationExpected"
-  | "isAtPrompt"
+  | "getPromptState"
   | "onPromptStateChange"
   | "onExit"
   | "getExitInfo"
@@ -487,15 +491,21 @@ export class TerminalNotReadyError extends Error {
 /**
  * Resolves once the terminal is safe to type into.
  *
- * With a shell integration, that means the line editor has taken the line
- * (see docs/terminal-input-readiness.md). Without one there is no reliable
- * signal, so we keep the old heuristic: first output, or a short grace period.
- * That heuristic is why a blocking oh-my-zsh update prompt used to eat the
- * first character of an injected command.
+ * A shell that can report readiness announces itself before any user rc file
+ * runs, so silence within `announceGraceMs` means "this shell will never tell
+ * us" — not "not ready yet". Those shells (bash, fish, zsh older than 5.3, a
+ * clobbered ZDOTDIR) keep the old heuristic: first output, or a short grace.
+ * That heuristic is what let a blocking oh-my-zsh update prompt eat the first
+ * character of an injected command, so it is a fallback, never the plan.
+ *
+ * Once a shell has announced, silence means the opposite: it is loaded and
+ * something in startup is holding stdin. We wait, then fail — never type.
+ *
+ * See docs/terminal-readiness.md.
  */
 async function waitForTerminalInputReadiness(
   terminal: ReadinessTerminal,
-  options: { timeoutMs: number },
+  options: { timeoutMs: number; announceGraceMs: number },
 ): Promise<void> {
   if (!terminal.shellIntegrationExpected) {
     await waitForFirstTerminalOutput(terminal);
@@ -505,19 +515,20 @@ async function waitForTerminalInputReadiness(
   if (terminal.getExitInfo()) {
     throw new TerminalNotReadyError(terminal.id, "exited", 0);
   }
-  if (terminal.isAtPrompt()) {
+  if (terminal.getPromptState().atPrompt) {
     return;
   }
 
   const startedAt = Date.now();
-  await new Promise<void>((resolve, reject) => {
+  const integrationSilent = await new Promise<boolean>((resolve, reject) => {
     let settled = false;
     let timeout: ReturnType<typeof setTimeout> | null = null;
+    let announceGrace: ReturnType<typeof setTimeout> | null = null;
     let unsubscribePromptState: (() => void) | null = null;
     let unsubscribeExit: (() => void) | null = null;
 
-    // One-shot: prompt, exit and timeout can all land in the same tick.
-    const settle = (error: TerminalNotReadyError | null) => {
+    // One-shot: prompt, exit, grace and timeout can all land in the same tick.
+    const settle = (error: TerminalNotReadyError | null, silent = false) => {
       if (settled) {
         return;
       }
@@ -526,6 +537,10 @@ async function waitForTerminalInputReadiness(
         clearTimeout(timeout);
         timeout = null;
       }
+      if (announceGrace) {
+        clearTimeout(announceGrace);
+        announceGrace = null;
+      }
       unsubscribePromptState?.();
       unsubscribePromptState = null;
       unsubscribeExit?.();
@@ -533,14 +548,14 @@ async function waitForTerminalInputReadiness(
       if (error) {
         reject(error);
       } else {
-        resolve();
+        resolve(silent);
       }
     };
 
     // Subscribe before re-reading the state: the marker can land between a
     // check and a late subscription, and that gap is the whole bug.
-    unsubscribePromptState = terminal.onPromptStateChange((atPrompt) => {
-      if (atPrompt) {
+    unsubscribePromptState = terminal.onPromptStateChange((state) => {
+      if (state.atPrompt) {
         settle(null);
       }
     });
@@ -548,7 +563,7 @@ async function waitForTerminalInputReadiness(
       settle(new TerminalNotReadyError(terminal.id, "exited", Date.now() - startedAt));
     });
 
-    if (terminal.isAtPrompt()) {
+    if (terminal.getPromptState().atPrompt) {
       settle(null);
       return;
     }
@@ -557,10 +572,23 @@ async function waitForTerminalInputReadiness(
       return;
     }
 
+    announceGrace = setTimeout(() => {
+      if (!terminal.getPromptState().shellIntegrationActive) {
+        settle(null, true);
+      }
+    }, options.announceGraceMs);
+
     timeout = setTimeout(() => {
       settle(new TerminalNotReadyError(terminal.id, "timeout", Date.now() - startedAt));
     }, options.timeoutMs);
   });
+
+  if (integrationSilent) {
+    // No integration in this shell after all. Waiting out the grace already
+    // gave startup the same head start the legacy heuristic allows, so this
+    // only has to confirm the terminal has produced something.
+    await waitForFirstTerminalOutput(terminal);
+  }
 }
 
 async function waitForFirstTerminalOutput(
@@ -672,6 +700,7 @@ async function runWorktreeTerminalBootstrap(
         createdTerminal = terminal;
         await waitForTerminalInputReadiness(terminal, {
           timeoutMs: TERMINAL_PROMPT_READY_TIMEOUT_MS,
+          announceGraceMs: TERMINAL_INTEGRATION_ANNOUNCE_GRACE_MS,
         });
         terminal.send({
           type: "input",
@@ -839,6 +868,7 @@ export interface SpawnWorkspaceScriptOptions {
   onLifecycleChanged?: () => void;
   // Overridable so tests can exercise the timeout without waiting it out.
   promptReadyTimeoutMs?: number;
+  integrationAnnounceGraceMs?: number;
 }
 
 interface ServiceScriptSetupResult {
@@ -1080,6 +1110,7 @@ export async function spawnWorkspaceScript(
     logger,
     onLifecycleChanged,
     promptReadyTimeoutMs,
+    integrationAnnounceGraceMs,
   } = options;
   const configResult = readPaseoConfig(repoRoot);
   if (!configResult.ok) {
@@ -1205,6 +1236,7 @@ export async function spawnWorkspaceScript(
     // into that interleaves the script command with the command's own input.
     await waitForTerminalInputReadiness(terminal, {
       timeoutMs: promptReadyTimeoutMs ?? TERMINAL_PROMPT_READY_TIMEOUT_MS,
+      announceGraceMs: integrationAnnounceGraceMs ?? TERMINAL_INTEGRATION_ANNOUNCE_GRACE_MS,
     });
     terminal.send({ type: "input", data: `${config.command}\r` });
 

@@ -2,6 +2,7 @@ import type {
   TerminalExitInfo,
   ServerMessage,
   ClientMessage,
+  TerminalPromptState,
   TerminalStateSnapshot,
   TerminalStateSnapshotOptions,
 } from "./terminal.js";
@@ -19,7 +20,7 @@ export interface WorkerTerminalInfo {
   shellIntegrationExpected: boolean;
   // Carried on creation so the parent starts from the worker's own state
   // instead of inferring it from whichever events happen to arrive first.
-  atPrompt: boolean;
+  promptState: TerminalPromptState;
 }
 
 export interface WorkerCreateTerminalOptions {
@@ -146,7 +147,7 @@ export type TerminalWorkerEvent =
   | {
       type: "terminalPromptState";
       terminalId: string;
-      atPrompt: boolean;
+      state: TerminalPromptState;
     }
   | {
       type: "terminalActivityChange";

@@ -336,9 +336,12 @@ describe("runAsyncWorktreeBootstrap", () => {
   }
 
   interface StubTerminalManagerOptions {
-    // Mirrors a zsh terminal: the daemon expects a readiness marker and must
-    // not type until one arrives.
+    // Mirrors a zsh terminal: the daemon installed the integration, so it must
+    // not type until the shell reports readiness.
     shellIntegrationExpected?: boolean;
+    // Mirrors the shell announcing that it can report readiness at all. False
+    // models zsh <5.3 or a clobbered ZDOTDIR: nothing will ever arrive.
+    announcesIntegration?: boolean;
     startsAtPrompt?: boolean;
   }
 
@@ -350,6 +353,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     let terminalCounter = 0;
     const sessionsById = new Map<string, TerminalSession>();
     const shellIntegrationExpected = stubOptions.shellIntegrationExpected ?? false;
+    const announcesIntegration = stubOptions.announcesIntegration ?? shellIntegrationExpected;
 
     return {
       async getTerminals() {
@@ -361,7 +365,9 @@ describe("runAsyncWorktreeBootstrap", () => {
         const terminalId = `term-${terminalCounter}`;
         let exitHandler: ((info: { exitCode: number | null }) => void) | null = null;
         let commandFinishedHandler: ((info: { exitCode: number | null }) => void) | null = null;
-        const promptStateHandlers = new Set<(atPrompt: boolean) => void>();
+        const promptStateHandlers = new Set<
+          (state: { atPrompt: boolean; shellIntegrationActive: boolean }) => void
+        >();
         let atPrompt = stubOptions.startsAtPrompt ?? false;
         let exitInfo: {
           exitCode: number | null;
@@ -375,7 +381,7 @@ describe("runAsyncWorktreeBootstrap", () => {
           }
           atPrompt = next;
           for (const handler of Array.from(promptStateHandlers)) {
-            handler(next);
+            handler({ atPrompt, shellIntegrationActive: announcesIntegration });
           }
         };
         terminalRecords.push({
@@ -399,7 +405,7 @@ describe("runAsyncWorktreeBootstrap", () => {
           name: options.name ?? "Terminal",
           cwd: options.cwd,
           shellIntegrationExpected,
-          isAtPrompt: () => atPrompt,
+          getPromptState: () => ({ atPrompt, shellIntegrationActive: announcesIntegration }),
           onPromptStateChange: (handler) => {
             promptStateHandlers.add(handler);
             return () => {
@@ -1357,6 +1363,76 @@ describe("runAsyncWorktreeBootstrap", () => {
     terminalRecords[0]?.triggerExit(1);
 
     await expect(spawned).rejects.toThrow(/exited before it reached a prompt/);
+    expect(terminalRecords[0]?.sentInputs).toEqual([]);
+  });
+
+  it("falls back to typing when a zsh never announces an integration", async () => {
+    commitPaseoScripts({ typecheck: { command: "npm run typecheck" } }, "add script config");
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    // zsh, so we installed the integration and expect a marker — but the shell
+    // never announces (zsh <5.3 has no add-zle-hook-widget, or a .zshrc
+    // clobbered ZDOTDIR). No marker is ever coming, so blocking on one would
+    // break every script for these users. Fall back to the old heuristic.
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords, {
+      shellIntegrationExpected: true,
+      announcesIntegration: false,
+    });
+
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-silent-integration",
+      scriptName: "typecheck",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager,
+      integrationAnnounceGraceMs: 20,
+      // Long enough that passing cannot be the readiness timeout firing.
+      promptReadyTimeoutMs: 60_000,
+    });
+
+    expect(terminalRecords[0]?.sentInputs).toEqual(["npm run typecheck\r"]);
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "typecheck" })).toMatchObject({
+      lifecycle: "running",
+    });
+  });
+
+  it("does not fall back once a zsh has announced its integration", async () => {
+    commitPaseoScripts({ typecheck: { command: "npm run typecheck" } }, "add script config");
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    // Announced but not at a prompt: startup is blocked on input. Silence here
+    // means "blocked", not "no integration" — typing would corrupt the command.
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords, {
+      shellIntegrationExpected: true,
+      announcesIntegration: true,
+    });
+
+    await expect(
+      spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId: repoDir,
+        projectSlug: "repo",
+        branchName: "feature-announced-blocked",
+        scriptName: "typecheck",
+        daemonPort: null,
+        serviceProxy: routeStore,
+        runtimeStore,
+        terminalManager,
+        integrationAnnounceGraceMs: 10,
+        promptReadyTimeoutMs: 40,
+      }),
+    ).rejects.toThrow(/never reached a prompt/);
+
     expect(terminalRecords[0]?.sentInputs).toEqual([]);
   });
 

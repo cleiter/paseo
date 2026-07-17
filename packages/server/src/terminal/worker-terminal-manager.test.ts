@@ -394,7 +394,7 @@ it("does not surface fire-and-forget send timeouts as unhandled rejections", asy
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -552,7 +552,7 @@ it("lists terminals locally without waiting on the worker", async () => {
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -565,7 +565,7 @@ it("lists terminals locally without waiting on the worker", async () => {
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -597,7 +597,7 @@ it("includes only stamped terminals in workspace-scoped local reads", async () =
       workspaceId: "ws-test",
       activity: null,
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -610,7 +610,7 @@ it("includes only stamped terminals in workspace-scoped local reads", async () =
       workspaceId: "ws-owned",
       activity: null,
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -623,7 +623,7 @@ it("includes only stamped terminals in workspace-scoped local reads", async () =
       workspaceId: "ws-sibling",
       activity: null,
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -665,7 +665,7 @@ it("surfaces worker activity changes via getActivity, onActivityChange, and term
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -729,7 +729,7 @@ it("sets terminal activity through a worker request", async () => {
       workspaceId: "ws-test",
       activity: null,
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -764,7 +764,7 @@ it("clears terminal attention through a worker request", async () => {
       workspaceId: "ws-test",
       activity: { state: "idle", attentionReason: "finished", changedAt: 1000 },
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -859,7 +859,7 @@ it("produces one terminals-changed snapshot per title change", async () => {
       workspaceId: "ws-test",
       activity: null,
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -898,7 +898,7 @@ it("produces one terminals-changed snapshot and one contribution event per activ
       workspaceId: "ws-test",
       activity: null,
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -951,7 +951,7 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
       workspaceId: "ws-test",
       activity: workingActivity,
       shellIntegrationExpected: false,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: false },
     },
     state: createTerminalState(),
   });
@@ -1011,57 +1011,53 @@ it("mirrors prompt state transitions from the worker", async () => {
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
       shellIntegrationExpected: true,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: true },
     },
     state: createTerminalState(),
   });
 
   const session = manager.getTerminal("terminal-a");
   expect(session?.shellIntegrationExpected).toBe(true);
-  expect(session?.isAtPrompt()).toBe(false);
+  expect(session?.getPromptState().atPrompt).toBe(false);
 
   const transitions: boolean[] = [];
-  session?.onPromptStateChange((atPrompt) => {
-    transitions.push(atPrompt);
+  session?.onPromptStateChange((state) => {
+    transitions.push(state.atPrompt);
   });
 
   worker.emitWorkerMessage({
     type: "terminalPromptState",
     terminalId: "terminal-a",
-    atPrompt: true,
+    state: { atPrompt: true, shellIntegrationActive: true },
   });
-  expect(session?.isAtPrompt()).toBe(true);
+  expect(session?.getPromptState().atPrompt).toBe(true);
 
   // A repeat of the same state is not a transition.
   worker.emitWorkerMessage({
     type: "terminalPromptState",
     terminalId: "terminal-a",
-    atPrompt: true,
+    state: { atPrompt: true, shellIntegrationActive: true },
   });
   worker.emitWorkerMessage({
     type: "terminalPromptState",
     terminalId: "terminal-a",
-    atPrompt: false,
+    state: { atPrompt: false, shellIntegrationActive: true },
   });
 
-  expect(session?.isAtPrompt()).toBe(false);
+  expect(session?.getPromptState().atPrompt).toBe(false);
   expect(transitions).toEqual([true, false]);
 });
 
-it("keeps prompt state that arrives before the terminal is registered", async () => {
+it("seeds prompt state from the terminalCreated snapshot", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 5,
     forkWorker: () => worker,
   });
 
-  // The worker can report readiness before terminalCreated crosses the channel.
-  // Dropping it would strand a caller waiting to type into a ready shell.
-  worker.emitWorkerMessage({
-    type: "terminalPromptState",
-    terminalId: "terminal-a",
-    atPrompt: true,
-  });
+  // The worker subscribes before it sends terminalCreated and IPC preserves
+  // order, so a prompt event can never land ahead of its record. Anything that
+  // happened during spawn is carried by the creation snapshot instead.
   worker.emitWorkerMessage({
     type: "terminalCreated",
     terminal: {
@@ -1071,14 +1067,53 @@ it("keeps prompt state that arrives before the terminal is registered", async ()
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
       shellIntegrationExpected: true,
-      atPrompt: false,
+      promptState: { atPrompt: true, shellIntegrationActive: true },
     },
     state: createTerminalState(),
   });
 
-  expect(manager.getTerminal("terminal-a")?.isAtPrompt()).toBe(true);
+  expect(manager.getTerminal("terminal-a")?.getPromptState()).toEqual({
+    atPrompt: true,
+    shellIntegrationActive: true,
+  });
 });
 
+it("ignores prompt state for a terminal that already exited", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 5,
+    forkWorker: () => worker,
+  });
+
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: { state: "idle", changedAt: 0 },
+      shellIntegrationExpected: true,
+      promptState: { atPrompt: false, shellIntegrationActive: true },
+    },
+    state: createTerminalState(),
+  });
+  const session = manager.getTerminal("terminal-a");
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: "terminal-a",
+    info: { exitCode: 0, signal: null, lastOutputLines: [] },
+  });
+
+  // A late marker from a dead shell must not resurrect at-prompt.
+  worker.emitWorkerMessage({
+    type: "terminalPromptState",
+    terminalId: "terminal-a",
+    state: { atPrompt: true, shellIntegrationActive: true },
+  });
+
+  expect(session?.getPromptState().atPrompt).toBe(false);
+});
 it("does not let a re-registered terminal roll back live prompt state", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
@@ -1095,7 +1130,7 @@ it("does not let a re-registered terminal roll back live prompt state", async ()
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
       shellIntegrationExpected: true,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: true },
     },
     state: createTerminalState(),
   } as const;
@@ -1104,14 +1139,14 @@ it("does not let a re-registered terminal roll back live prompt state", async ()
   worker.emitWorkerMessage({
     type: "terminalPromptState",
     terminalId: "terminal-a",
-    atPrompt: true,
+    state: { atPrompt: true, shellIntegrationActive: true },
   });
 
   // terminalCreated and the create response both register the same terminal;
   // the second one carries the spawn-time snapshot and must not win.
   worker.emitWorkerMessage(createdPayload);
 
-  expect(manager.getTerminal("terminal-a")?.isAtPrompt()).toBe(true);
+  expect(manager.getTerminal("terminal-a")?.getPromptState().atPrompt).toBe(true);
 });
 
 it("reports a terminal as off-prompt once its shell exits", async () => {
@@ -1130,7 +1165,7 @@ it("reports a terminal as off-prompt once its shell exits", async () => {
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
       shellIntegrationExpected: true,
-      atPrompt: false,
+      promptState: { atPrompt: false, shellIntegrationActive: true },
     },
     state: createTerminalState(),
   });
@@ -1138,9 +1173,9 @@ it("reports a terminal as off-prompt once its shell exits", async () => {
   worker.emitWorkerMessage({
     type: "terminalPromptState",
     terminalId: "terminal-a",
-    atPrompt: true,
+    state: { atPrompt: true, shellIntegrationActive: true },
   });
-  expect(session?.isAtPrompt()).toBe(true);
+  expect(session?.getPromptState().atPrompt).toBe(true);
 
   worker.emitWorkerMessage({
     type: "terminalExit",
@@ -1148,5 +1183,5 @@ it("reports a terminal as off-prompt once its shell exits", async () => {
     info: { exitCode: 0, signal: null, lastOutputLines: [] },
   });
 
-  expect(session?.isAtPrompt()).toBe(false);
+  expect(session?.getPromptState().atPrompt).toBe(false);
 });

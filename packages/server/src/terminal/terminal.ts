@@ -73,24 +73,34 @@ export interface TerminalActivityTransition {
   previous: TerminalActivity | null;
 }
 
+export interface TerminalPromptState {
+  // The shell's line editor owns stdin right now — the only safe moment to
+  // type into this terminal.
+  atPrompt: boolean;
+  // The shell integration announced itself, so this terminal *can* report
+  // readiness. Without it, `atPrompt: false` means "we will never know",
+  // not "not yet". See docs/terminal-readiness.md.
+  shellIntegrationActive: boolean;
+}
+
 export interface TerminalSession {
   id: string;
   name: string;
   cwd: string;
   workspaceId: string;
-  // True when the shell integration was installed for this terminal's shell.
-  // "Expected", not "installed": a user's rc file can still clobber the hook,
-  // so this says we tried, not that the marker will arrive.
+  // True when we installed the shell integration for this terminal's shell.
+  // Only says we tried: whether the shell can actually report readiness is
+  // `getPromptState().shellIntegrationActive`, which the shell itself asserts.
   shellIntegrationExpected: boolean;
   send(msg: ClientMessage): void;
   subscribe(listener: (msg: ServerMessage) => void, options?: TerminalSubscribeOptions): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
   onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
-  onPromptStateChange(listener: (atPrompt: boolean) => void): () => void;
-  // Current state, not history: true only while the shell's line editor owns
-  // stdin. Anything typed into the terminal while this is false can be eaten
-  // by whatever else is reading (a `read` in an rc file, a foreground command).
-  isAtPrompt(): boolean;
+  onPromptStateChange(listener: (state: TerminalPromptState) => void): () => void;
+  // Current state, not history. Anything typed while `atPrompt` is false can be
+  // eaten by whatever else is reading stdin (a `read` in an rc file, a
+  // foreground command).
+  getPromptState(): TerminalPromptState;
   onTitleChange(listener: (title?: string) => void): () => void;
   onActivityChange(listener: (transition: TerminalActivityTransition) => void): () => void;
   getSize(): { rows: number; cols: number };
@@ -108,28 +118,42 @@ export interface TerminalSession {
 }
 
 /**
- * OSC 633;R;<nonce> is our own prompt-ready marker, emitted from the zsh
- * integration's zle-line-init hook — the one moment we know the line editor,
- * and nothing else, is reading stdin.
+ * Paseo's own OSC 633 markers, all nonce-tagged.
  *
  * The nonce is per-terminal and injected via the environment, so the shell hook
  * can echo back something only this session knows. It is a collision guard, not
- * a security boundary: it stops unrelated OSC 633 traffic and replayed
- * scrollback from being mistaken for readiness. Anything that can read this
- * terminal's env can already type into the terminal directly.
+ * a security boundary: it stops unrelated OSC 633 traffic (VS Code's own shell
+ * integration emits the same codes) and replayed scrollback from being read as
+ * terminal state. Anything that can read this terminal's env can already type
+ * into the terminal directly.
+ *
+ * - `I;<nonce>` — integration is loaded and will report readiness. Emitted from
+ *   the .zshenv wrapper before any user rc file runs, so its absence means "no
+ *   integration here", never "still starting up". That distinction is what lets
+ *   the daemon tell a shell that cannot report readiness apart from one that is
+ *   blocked waiting for input.
+ * - `R;<nonce>` — the line editor has the line: safe to type.
+ * - `C;<nonce>` — a command took the foreground: no longer safe to type.
+ *
+ * See docs/terminal-readiness.md.
  */
-function parsePromptReadyOsc(data: string, nonce: string): boolean {
-  const parts = data.split(";");
-  if (parts[0] !== "R" || parts.length !== 2) {
-    return false;
-  }
-  return parts[1] === nonce;
-}
+type PaseoTerminalMarker = "integration-active" | "prompt-ready" | "command-started";
 
-// OSC 633;C means the shell just handed the foreground to a command, so the
-// line editor no longer owns stdin.
-function isCommandStartedOsc(data: string): boolean {
-  return data === "C";
+function parsePaseoMarkerOsc(data: string, nonce: string): PaseoTerminalMarker | null {
+  const parts = data.split(";");
+  if (parts.length !== 2 || parts[1] !== nonce) {
+    return null;
+  }
+  switch (parts[0]) {
+    case "I":
+      return "integration-active";
+    case "R":
+      return "prompt-ready";
+    case "C":
+      return "command-started";
+    default:
+      return null;
+  }
 }
 
 function parseCommandFinishedOsc(data: string): TerminalCommandFinishedInfo | null {
@@ -193,7 +217,7 @@ interface BuildTerminalEnvironmentInput {
 }
 
 // Only zsh ships a Paseo shell integration today, so only zsh can report when
-// its line editor is ready. See docs/terminal-input-readiness.md.
+// its line editor is ready. See docs/terminal-readiness.md.
 export function shellIntegrationExpectedForShell(shell: string): boolean {
   return basename(shell) === "zsh";
 }
@@ -863,10 +887,11 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   const listeners = new Set<(msg: ServerMessage) => void>();
   const exitListeners = new Set<(info: TerminalExitInfo) => void>();
   const commandFinishedListeners = new Set<(info: TerminalCommandFinishedInfo) => void>();
-  const promptStateListeners = new Set<(atPrompt: boolean) => void>();
+  const promptStateListeners = new Set<(state: TerminalPromptState) => void>();
   const titleChangeListeners = new Set<(title?: string) => void>();
   const promptNonce = randomUUID();
   let atPrompt = false;
+  let shellIntegrationActive = false;
   let killed = false;
   let disposed = false;
   let exitEmitted = false;
@@ -1034,13 +1059,13 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   }
 
   const disposeCommandLifecycleSubscription = terminal.parser.registerOscHandler(633, (data) => {
-    if (parsePromptReadyOsc(data, promptNonce)) {
-      setAtPrompt(true);
-      return true;
-    }
-
-    if (isCommandStartedOsc(data)) {
-      setAtPrompt(false);
+    const marker = parsePaseoMarkerOsc(data, promptNonce);
+    if (marker) {
+      if (marker === "integration-active") {
+        setShellIntegrationActive();
+      } else {
+        setAtPrompt(marker === "prompt-ready");
+      }
       return true;
     }
 
@@ -1094,18 +1119,30 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     };
   }
 
+  function emitPromptState(): void {
+    for (const listener of Array.from(promptStateListeners)) {
+      try {
+        listener({ atPrompt, shellIntegrationActive });
+      } catch {
+        // no-op
+      }
+    }
+  }
+
   function setAtPrompt(next: boolean): void {
     if (atPrompt === next) {
       return;
     }
     atPrompt = next;
-    for (const listener of Array.from(promptStateListeners)) {
-      try {
-        listener(next);
-      } catch {
-        // no-op
-      }
+    emitPromptState();
+  }
+
+  function setShellIntegrationActive(): void {
+    if (shellIntegrationActive) {
+      return;
     }
+    shellIntegrationActive = true;
+    emitPromptState();
   }
 
   function emitExit(info: TerminalExitInfo): void {
@@ -1391,15 +1428,15 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     };
   }
 
-  function onPromptStateChange(listener: (atPrompt: boolean) => void): () => void {
+  function onPromptStateChange(listener: (state: TerminalPromptState) => void): () => void {
     promptStateListeners.add(listener);
     return () => {
       promptStateListeners.delete(listener);
     };
   }
 
-  function isAtPrompt(): boolean {
-    return atPrompt;
+  function getPromptState(): TerminalPromptState {
+    return { atPrompt, shellIntegrationActive };
   }
 
   function onTitleChange(listener: (title?: string) => void): () => void {
@@ -1545,7 +1582,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     onExit,
     onCommandFinished,
     onPromptStateChange,
-    isAtPrompt,
+    getPromptState,
     onTitleChange,
     onActivityChange,
     getSize,

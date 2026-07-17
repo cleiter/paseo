@@ -70,7 +70,7 @@ function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
     ...(session.getTitle() ? { title: session.getTitle() } : {}),
     activity: session.getActivity(),
     shellIntegrationExpected: session.shellIntegrationExpected,
-    atPrompt: session.isAtPrompt(),
+    promptState: session.getPromptState(),
   };
 }
 
@@ -178,7 +178,7 @@ function watchTerminal(session: TerminalSession): void {
       info,
     });
   });
-  const unsubscribePromptState = session.onPromptStateChange((atPrompt) => {
+  const unsubscribePromptState = session.onPromptStateChange((state) => {
     // Flush first: a readiness marker means "everything printed before this is
     // already on screen", and the parent must not see the state flip ahead of
     // the output that explains it.
@@ -186,7 +186,7 @@ function watchTerminal(session: TerminalSession): void {
     sendToParent({
       type: "terminalPromptState",
       terminalId: session.id,
-      atPrompt,
+      state,
     });
   });
   const unsubscribeActivity = session.onActivityChange((transition) => {
