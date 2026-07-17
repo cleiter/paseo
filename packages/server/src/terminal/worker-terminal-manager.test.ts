@@ -393,6 +393,8 @@ it("does not surface fire-and-forget send timeouts as unhandled rejections", asy
       cwd: "/tmp",
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -549,6 +551,8 @@ it("lists terminals locally without waiting on the worker", async () => {
       cwd: "/workspace",
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -560,6 +564,8 @@ it("lists terminals locally without waiting on the worker", async () => {
       cwd: "/workspace/apps/mobile",
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -590,6 +596,8 @@ it("includes only stamped terminals in workspace-scoped local reads", async () =
       cwd: "/workspace",
       workspaceId: "ws-test",
       activity: null,
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -601,6 +609,8 @@ it("includes only stamped terminals in workspace-scoped local reads", async () =
       cwd: "/workspace",
       workspaceId: "ws-owned",
       activity: null,
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -612,6 +622,8 @@ it("includes only stamped terminals in workspace-scoped local reads", async () =
       cwd: "/workspace",
       workspaceId: "ws-sibling",
       activity: null,
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -652,6 +664,8 @@ it("surfaces worker activity changes via getActivity, onActivityChange, and term
       cwd: "/workspace",
       workspaceId: "ws-test",
       activity: { state: "idle", changedAt: 0 },
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -714,6 +728,8 @@ it("sets terminal activity through a worker request", async () => {
       cwd: "/workspace",
       workspaceId: "ws-test",
       activity: null,
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -747,6 +763,8 @@ it("clears terminal attention through a worker request", async () => {
       cwd: "/workspace",
       workspaceId: "ws-test",
       activity: { state: "idle", attentionReason: "finished", changedAt: 1000 },
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -840,6 +858,8 @@ it("produces one terminals-changed snapshot per title change", async () => {
       cwd: "/workspace",
       workspaceId: "ws-test",
       activity: null,
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -877,6 +897,8 @@ it("produces one terminals-changed snapshot and one contribution event per activ
       cwd: "/workspace",
       workspaceId: "ws-test",
       activity: null,
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -928,6 +950,8 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
       cwd: "/workspace",
       workspaceId: "ws-test",
       activity: workingActivity,
+      shellIntegrationExpected: false,
+      atPrompt: false,
     },
     state: createTerminalState(),
   });
@@ -969,4 +993,160 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
       workspaceId: "ws-test",
     },
   ]);
+});
+
+it("mirrors prompt state transitions from the worker", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 5,
+    forkWorker: () => worker,
+  });
+
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: { state: "idle", changedAt: 0 },
+      shellIntegrationExpected: true,
+      atPrompt: false,
+    },
+    state: createTerminalState(),
+  });
+
+  const session = manager.getTerminal("terminal-a");
+  expect(session?.shellIntegrationExpected).toBe(true);
+  expect(session?.isAtPrompt()).toBe(false);
+
+  const transitions: boolean[] = [];
+  session?.onPromptStateChange((atPrompt) => {
+    transitions.push(atPrompt);
+  });
+
+  worker.emitWorkerMessage({
+    type: "terminalPromptState",
+    terminalId: "terminal-a",
+    atPrompt: true,
+  });
+  expect(session?.isAtPrompt()).toBe(true);
+
+  // A repeat of the same state is not a transition.
+  worker.emitWorkerMessage({
+    type: "terminalPromptState",
+    terminalId: "terminal-a",
+    atPrompt: true,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalPromptState",
+    terminalId: "terminal-a",
+    atPrompt: false,
+  });
+
+  expect(session?.isAtPrompt()).toBe(false);
+  expect(transitions).toEqual([true, false]);
+});
+
+it("keeps prompt state that arrives before the terminal is registered", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 5,
+    forkWorker: () => worker,
+  });
+
+  // The worker can report readiness before terminalCreated crosses the channel.
+  // Dropping it would strand a caller waiting to type into a ready shell.
+  worker.emitWorkerMessage({
+    type: "terminalPromptState",
+    terminalId: "terminal-a",
+    atPrompt: true,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: { state: "idle", changedAt: 0 },
+      shellIntegrationExpected: true,
+      atPrompt: false,
+    },
+    state: createTerminalState(),
+  });
+
+  expect(manager.getTerminal("terminal-a")?.isAtPrompt()).toBe(true);
+});
+
+it("does not let a re-registered terminal roll back live prompt state", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 5,
+    forkWorker: () => worker,
+  });
+
+  const createdPayload = {
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: { state: "idle", changedAt: 0 },
+      shellIntegrationExpected: true,
+      atPrompt: false,
+    },
+    state: createTerminalState(),
+  } as const;
+
+  worker.emitWorkerMessage(createdPayload);
+  worker.emitWorkerMessage({
+    type: "terminalPromptState",
+    terminalId: "terminal-a",
+    atPrompt: true,
+  });
+
+  // terminalCreated and the create response both register the same terminal;
+  // the second one carries the spawn-time snapshot and must not win.
+  worker.emitWorkerMessage(createdPayload);
+
+  expect(manager.getTerminal("terminal-a")?.isAtPrompt()).toBe(true);
+});
+
+it("reports a terminal as off-prompt once its shell exits", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 5,
+    forkWorker: () => worker,
+  });
+
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: { state: "idle", changedAt: 0 },
+      shellIntegrationExpected: true,
+      atPrompt: false,
+    },
+    state: createTerminalState(),
+  });
+  const session = manager.getTerminal("terminal-a");
+  worker.emitWorkerMessage({
+    type: "terminalPromptState",
+    terminalId: "terminal-a",
+    atPrompt: true,
+  });
+  expect(session?.isAtPrompt()).toBe(true);
+
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: "terminal-a",
+    info: { exitCode: 0, signal: null, lastOutputLines: [] },
+  });
+
+  expect(session?.isAtPrompt()).toBe(false);
 });

@@ -69,6 +69,8 @@ function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
     workspaceId: session.workspaceId,
     ...(session.getTitle() ? { title: session.getTitle() } : {}),
     activity: session.getActivity(),
+    shellIntegrationExpected: session.shellIntegrationExpected,
+    atPrompt: session.isAtPrompt(),
   };
 }
 
@@ -176,6 +178,17 @@ function watchTerminal(session: TerminalSession): void {
       info,
     });
   });
+  const unsubscribePromptState = session.onPromptStateChange((atPrompt) => {
+    // Flush first: a readiness marker means "everything printed before this is
+    // already on screen", and the parent must not see the state flip ahead of
+    // the output that explains it.
+    outputCoalescer.flush();
+    sendToParent({
+      type: "terminalPromptState",
+      terminalId: session.id,
+      atPrompt,
+    });
+  });
   const unsubscribeActivity = session.onActivityChange((transition) => {
     sendToParent({
       type: "terminalActivityChange",
@@ -190,6 +203,7 @@ function watchTerminal(session: TerminalSession): void {
     unsubscribeExit,
     unsubscribeTitle,
     unsubscribeCommandFinished,
+    unsubscribePromptState,
     unsubscribeActivity,
   ]);
 }

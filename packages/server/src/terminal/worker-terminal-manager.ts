@@ -71,9 +71,15 @@ interface WorkerTerminalRecord {
   // the snapshotReady event that precedes a live-restore replay.
   replayPreamble: string;
   exitInfo: TerminalExitInfo | null;
+  // Live prompt state, kept out of `info`: re-registering a record (the
+  // terminalCreated event and the create response both do) replaces `info`
+  // wholesale, which would roll this back to whatever the worker reported at
+  // spawn time. Once the record exists, only prompt-state events move it.
+  atPrompt: boolean;
   messageListeners: Set<(msg: ServerMessage) => void>;
   exitListeners: Set<(info: TerminalExitInfo) => void>;
   commandFinishedListeners: Set<(info: TerminalCommandFinishedInfo) => void>;
+  promptStateListeners: Set<(atPrompt: boolean) => void>;
   titleChangeListeners: Set<(title?: string) => void>;
   activityChangeListeners: Set<(transition: TerminalActivityTransition) => void>;
   session: TerminalSession;
@@ -136,6 +142,8 @@ function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerm
     workspaceId: info.workspaceId,
     ...(info.title ? { title: info.title } : {}),
     activity: info.activity,
+    shellIntegrationExpected: info.shellIntegrationExpected,
+    atPrompt: info.atPrompt,
   };
 }
 
@@ -154,6 +162,10 @@ export function createWorkerTerminalManager(
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   const pendingRequests = new Map<string, PendingRequest>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
+  // Prompt-state events that arrived before their terminalCreated. Dropping
+  // them would strand a caller waiting to type into a terminal that is already
+  // at a prompt, so they are held until the record exists.
+  const pendingPromptStateById = new Map<string, boolean>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
   const terminalsChangedListeners = new Set<TerminalsChangedListener>();
@@ -229,15 +241,22 @@ export function createWorkerTerminalManager(
       return existing.session;
     }
 
+    // A prompt-state event can beat terminalCreated across the IPC channel;
+    // it is buffered rather than dropped, so apply it over the spawn-time seed.
+    const bufferedPromptState = pendingPromptStateById.get(input.info.id);
+    pendingPromptStateById.delete(input.info.id);
+
     const record: WorkerTerminalRecord = {
       info: cloneTerminalInfo(input.info),
       state: input.state,
       activity: input.info.activity,
       replayPreamble: "",
       exitInfo: null,
+      atPrompt: bufferedPromptState ?? input.info.atPrompt,
       messageListeners: new Set(),
       exitListeners: new Set(),
       commandFinishedListeners: new Set(),
+      promptStateListeners: new Set(),
       titleChangeListeners: new Set(),
       activityChangeListeners: new Set(),
       session: undefined as unknown as TerminalSession,
@@ -297,6 +316,18 @@ export function createWorkerTerminalManager(
         return () => {
           record.commandFinishedListeners.delete(listener);
         };
+      },
+      onPromptStateChange(listener: (atPrompt: boolean) => void): () => void {
+        record.promptStateListeners.add(listener);
+        return () => {
+          record.promptStateListeners.delete(listener);
+        };
+      },
+      isAtPrompt(): boolean {
+        return record.atPrompt;
+      },
+      get shellIntegrationExpected() {
+        return record.info.shellIntegrationExpected;
       },
       onTitleChange(listener: (title?: string) => void): () => void {
         record.titleChangeListeners.add(listener);
@@ -406,6 +437,8 @@ export function createWorkerTerminalManager(
     }
     recordsById.delete(terminalId);
     terminalActivityTokenById.delete(terminalId);
+    // Never let a buffered marker outlive its terminal and seed a later record.
+    pendingPromptStateById.delete(terminalId);
     const terminalIds = terminalIdsByCwd.get(record.info.cwd);
     if (terminalIds) {
       terminalIds.delete(terminalId);
@@ -442,6 +475,9 @@ export function createWorkerTerminalManager(
       return;
     }
     record.exitInfo = message.info;
+    // The shell is gone; nothing is reading the line any more.
+    record.atPrompt = false;
+    record.promptStateListeners.clear();
     for (const listener of Array.from(record.exitListeners)) {
       listener(message.info);
     }
@@ -497,6 +533,23 @@ export function createWorkerTerminalManager(
     }
     for (const listener of Array.from(record.commandFinishedListeners)) {
       listener(message.info);
+    }
+  }
+
+  function handleTerminalPromptStateEvent(
+    message: Extract<TerminalWorkerToParentMessage, { type: "terminalPromptState" }>,
+  ): void {
+    const record = recordsById.get(message.terminalId);
+    if (!record) {
+      pendingPromptStateById.set(message.terminalId, message.atPrompt);
+      return;
+    }
+    if (record.atPrompt === message.atPrompt) {
+      return;
+    }
+    record.atPrompt = message.atPrompt;
+    for (const listener of Array.from(record.promptStateListeners)) {
+      listener(message.atPrompt);
     }
   }
 
@@ -570,6 +623,11 @@ export function createWorkerTerminalManager(
 
       case "terminalCommandFinished": {
         handleTerminalCommandFinishedEvent(message);
+        return;
+      }
+
+      case "terminalPromptState": {
+        handleTerminalPromptStateEvent(message);
         return;
       }
 

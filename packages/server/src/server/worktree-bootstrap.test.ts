@@ -30,6 +30,21 @@ interface CreateAgentWorktreeTestResult {
   shouldBootstrap: boolean;
 }
 
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs = 5000,
+  intervalMs = 5,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
+}
+
 async function cleanupTerminalManager(terminalManager: TerminalManager): Promise<void> {
   const terminalsByCwd = await Promise.all(
     terminalManager.listDirectories().map((cwd) => terminalManager.getTerminals(cwd)),
@@ -316,15 +331,25 @@ describe("runAsyncWorktreeBootstrap", () => {
     id: string;
     triggerExit: (exitCode: number) => void;
     triggerCommandFinished: (exitCode: number) => void;
+    setAtPrompt: (atPrompt: boolean) => void;
     sentInputs: string[];
+  }
+
+  interface StubTerminalManagerOptions {
+    // Mirrors a zsh terminal: the daemon expects a readiness marker and must
+    // not type until one arrives.
+    shellIntegrationExpected?: boolean;
+    startsAtPrompt?: boolean;
   }
 
   function createStubTerminalManager(
     createTerminalCalls: CreateTerminalCall[],
     terminalRecords: StubTerminalRecord[] = [],
+    stubOptions: StubTerminalManagerOptions = {},
   ): TerminalManager {
     let terminalCounter = 0;
     const sessionsById = new Map<string, TerminalSession>();
+    const shellIntegrationExpected = stubOptions.shellIntegrationExpected ?? false;
 
     return {
       async getTerminals() {
@@ -336,14 +361,33 @@ describe("runAsyncWorktreeBootstrap", () => {
         const terminalId = `term-${terminalCounter}`;
         let exitHandler: ((info: { exitCode: number | null }) => void) | null = null;
         let commandFinishedHandler: ((info: { exitCode: number | null }) => void) | null = null;
+        const promptStateHandlers = new Set<(atPrompt: boolean) => void>();
+        let atPrompt = stubOptions.startsAtPrompt ?? false;
+        let exitInfo: {
+          exitCode: number | null;
+          signal: number | null;
+          lastOutputLines: string[];
+        } | null = null;
         const sentInputs: string[] = [];
+        const setAtPrompt = (next: boolean) => {
+          if (atPrompt === next) {
+            return;
+          }
+          atPrompt = next;
+          for (const handler of Array.from(promptStateHandlers)) {
+            handler(next);
+          }
+        };
         terminalRecords.push({
           id: terminalId,
           sentInputs,
+          setAtPrompt,
           triggerCommandFinished: (exitCode) => {
             commandFinishedHandler?.({ exitCode });
           },
           triggerExit: (exitCode) => {
+            exitInfo = { exitCode, signal: null, lastOutputLines: [] };
+            setAtPrompt(false);
             if (exitHandler) {
               exitHandler({ exitCode });
             }
@@ -354,6 +398,14 @@ describe("runAsyncWorktreeBootstrap", () => {
           id: terminalId,
           name: options.name ?? "Terminal",
           cwd: options.cwd,
+          shellIntegrationExpected,
+          isAtPrompt: () => atPrompt,
+          onPromptStateChange: (handler) => {
+            promptStateHandlers.add(handler);
+            return () => {
+              promptStateHandlers.delete(handler);
+            };
+          },
           send: (message) => {
             if (message.type === "input") {
               sentInputs.push(message.data);
@@ -390,7 +442,7 @@ describe("runAsyncWorktreeBootstrap", () => {
           getTitle: () => undefined,
           getActivity: () => null,
           setActivity: () => {},
-          getExitInfo: () => null,
+          getExitInfo: () => exitInfo,
           killAndWait: async () => {},
         };
         sessionsById.set(terminalId, session);
@@ -1196,5 +1248,143 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(createTerminalCalls[0]?.env?.PASEO_URL).toBe(
       "http://web--feature-remote-service--repo.localhost:6767",
     );
+  });
+
+  it("waits for the shell prompt before typing the script command", async () => {
+    commitPaseoScripts({ typecheck: { command: "npm run typecheck" } }, "add script config");
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords, {
+      shellIntegrationExpected: true,
+    });
+
+    const spawned = spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-prompt-gate",
+      scriptName: "typecheck",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager,
+    });
+
+    await waitForCondition(() => terminalRecords.length === 1);
+    // The shell is still starting up — anything typed now can be eaten by an
+    // rc file blocked on `read`.
+    expect(terminalRecords[0]?.sentInputs).toEqual([]);
+
+    terminalRecords[0]?.setAtPrompt(true);
+    await spawned;
+
+    expect(terminalRecords[0]?.sentInputs).toEqual(["npm run typecheck\r"]);
+  });
+
+  it("keeps the blocked terminal for retry when the shell never reaches a prompt", async () => {
+    commitPaseoScripts({ typecheck: { command: "npm run typecheck" } }, "add script config");
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords, {
+      shellIntegrationExpected: true,
+    });
+
+    const spawnOptions = {
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-prompt-timeout",
+      scriptName: "typecheck",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager,
+      promptReadyTimeoutMs: 20,
+    };
+
+    await expect(spawnWorkspaceScript(spawnOptions)).rejects.toThrow(/never reached a prompt/);
+
+    // Nothing typed, and the terminal stays open holding whatever blocked it.
+    expect(terminalRecords[0]?.sentInputs).toEqual([]);
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "typecheck" })).toMatchObject({
+      lifecycle: "stopped",
+      terminalId: terminalRecords[0]?.id,
+      exitCode: null,
+    });
+
+    // Answering the blocking prompt puts that same shell at its line editor;
+    // re-running must reuse it rather than spawn another blocked shell.
+    terminalRecords[0]?.setAtPrompt(true);
+    const retry = await spawnWorkspaceScript(spawnOptions);
+
+    expect(createTerminalCalls).toHaveLength(1);
+    expect(retry.terminalId).toBe(terminalRecords[0]?.id);
+    expect(terminalRecords[0]?.sentInputs).toEqual(["npm run typecheck\r"]);
+  });
+
+  it("fails fast when the shell exits before reaching a prompt", async () => {
+    commitPaseoScripts({ typecheck: { command: "npm run typecheck" } }, "add script config");
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords, {
+      shellIntegrationExpected: true,
+    });
+
+    const spawned = spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-prompt-exit",
+      scriptName: "typecheck",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager,
+      // Long enough that passing this test cannot be the timeout firing.
+      promptReadyTimeoutMs: 60_000,
+    });
+
+    await waitForCondition(() => terminalRecords.length === 1);
+    terminalRecords[0]?.triggerExit(1);
+
+    await expect(spawned).rejects.toThrow(/exited before it reached a prompt/);
+    expect(terminalRecords[0]?.sentInputs).toEqual([]);
+  });
+
+  it("types immediately when the shell has no integration to report readiness", async () => {
+    commitPaseoScripts({ typecheck: { command: "npm run typecheck" } }, "add script config");
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    // bash/fish have no Paseo integration: no marker will ever arrive, so the
+    // legacy output heuristic must still run rather than block forever.
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords, {
+      shellIntegrationExpected: false,
+    });
+
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-no-integration",
+      scriptName: "typecheck",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager,
+    });
+
+    expect(terminalRecords[0]?.sentInputs).toEqual(["npm run typecheck\r"]);
   });
 });

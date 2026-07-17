@@ -16,6 +16,10 @@ export interface WorkerTerminalInfo {
   workspaceId?: string;
   title?: string;
   activity: TerminalActivity | null;
+  shellIntegrationExpected: boolean;
+  // Carried on creation so the parent starts from the worker's own state
+  // instead of inferring it from whichever events happen to arrive first.
+  atPrompt: boolean;
 }
 
 export interface WorkerCreateTerminalOptions {
@@ -138,6 +142,11 @@ export type TerminalWorkerEvent =
       info: {
         exitCode: number | null;
       };
+    }
+  | {
+      type: "terminalPromptState";
+      terminalId: string;
+      atPrompt: boolean;
     }
   | {
       type: "terminalActivityChange";
