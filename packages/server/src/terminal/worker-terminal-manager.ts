@@ -31,6 +31,8 @@ import type {
   TerminalWorkerResponse,
   TerminalWorkerToParentMessage,
   WorkerCreateTerminalOptions,
+  TerminalWorkerPromptStateResult,
+  TerminalWorkerSendIfAtPromptResult,
   TerminalWorkerStateResult,
   WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
@@ -317,6 +319,27 @@ export function createWorkerTerminalManager(
       },
       getPromptState(): TerminalPromptState {
         return record.promptState;
+      },
+      async fetchPromptState(): Promise<TerminalPromptState> {
+        // Round-trip so the answer reflects the worker's state, not this
+        // process's copy of it. IPC is ordered, so anything the worker already
+        // emitted has arrived by the time the response does.
+        const result = (await sendRequest({
+          type: "getPromptState",
+          terminalId: record.info.id,
+        })) as TerminalWorkerPromptStateResult;
+        if (result) {
+          record.promptState = result;
+        }
+        return result ?? record.promptState;
+      },
+      async sendInputIfAtPrompt(data: string): Promise<boolean> {
+        const result = (await sendRequest({
+          type: "sendInputIfAtPrompt",
+          terminalId: record.info.id,
+          data,
+        })) as TerminalWorkerSendIfAtPromptResult;
+        return result.sent;
       },
       get shellIntegrationExpected() {
         return record.info.shellIntegrationExpected;

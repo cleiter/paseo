@@ -68,14 +68,38 @@ oh-my-zsh, before anything that can block on `read`. Placement is the entire poi
 The wrapper only announces when it can deliver: it checks `is-at-least 5.3`. Announcing
 without delivering would strand every script on the timeout.
 
+The grace is 5s, and expiring is not on its own enough to fall back: the daemon
+re-reads the state **from the worker** first (`fetchPromptState`). The parent holds a
+copy that lags by one IPC hop, so an announce in flight looks exactly like silence
+there — and concluding "no integration" from that would take the legacy path and
+retype the original bug. Only the worker's own answer can end the wait.
+
 Residual gaps, by design:
 
-- A blocking **`/etc/zshenv`** (system-wide, runs before ours) delays the announce.
-  Nothing user-level can.
-- Announce sent, then a `.zshrc` tears out our hooks → we wait and fail rather than
-  corrupt. Fail-closed is the intended direction.
+- A blocking or very slow **`/etc/zshenv`** (system-wide, runs before ours) delays the
+  announce past the grace. Nothing user-level can; the 5s bound is about the shell's
+  own speed, not IPC timing.
+- Announce sent, then a `.zshrc` tears out our hooks, or `add-zle-hook-widget` is not
+  loadable at `precmd` despite the version check → `I` with no possible `R` → the
+  readiness timeout fails the script. Annoying, but fail-closed: it never corrupts.
+  The version check is deliberately a proxy for "can deliver"; globbing `$fpath`
+  instead would misfire for rc files that extend `fpath` later, and misfiring there
+  is fail-**open**.
 - No announce → the old racy heuristic. Not a regression: that is what those shells
   have today.
+
+### Known gap: ZLE widgets that read stdin
+
+`C` is emitted from `preexec`, which does **not** fire for foreground readers launched
+by a ZLE widget — `fzf` on Ctrl-R is the common one. The line editor is still "active"
+by zsh's reckoning, so `atPrompt` stays true while fzf owns stdin, and a script
+launched at that instant types into fzf.
+
+zsh offers no hook for it. The only sound signal is the pty's foreground process
+group, which node-pty does not expose. It needs someone to be using a script terminal
+interactively at the exact moment a script is injected, so it is narrow — but it is
+fail-open, unlike the gaps above, and worth closing if the foreground-pgid route ever
+becomes available.
 
 ## Why `zle-line-init`, not `precmd`
 
@@ -138,6 +162,14 @@ manager must keep — each has a test in `worker-terminal-manager.test.ts`:
 marker can land in the gap), rejects immediately on terminal exit, and otherwise
 times out after 15s with a `TerminalNotReadyError`. For an announced shell it never
 types anyway — that would reintroduce the exact bug.
+
+The wait only proves the shell **was** ready. The write re-checks: for an announced
+shell the command goes through `sendInputIfAtPrompt`, which the worker answers by
+checking and writing in the same tick against the live session. If the shell lost its
+prompt in between, nothing is sent and the script fails with `reason: "raced"` —
+recoverable by re-running, and it keeps its terminal like a timeout does. Legacy
+shells send unguarded: they never report a prompt, so guarding the write there would
+mean never typing at all.
 
 On a readiness timeout the terminal is **left open**: it holds the prompt the user
 needs to answer. For plain scripts the runtime entry is preserved with its

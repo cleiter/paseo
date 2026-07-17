@@ -62,8 +62,13 @@ const WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS = 1_500;
 const TERMINAL_PROMPT_READY_TIMEOUT_MS = 15_000;
 // How long to wait for a shell to announce its integration before concluding it
 // has none. The announce is emitted from our .zshenv wrapper before any user rc
-// file runs, so this only has to cover zsh reaching its first sourced line.
-const TERMINAL_INTEGRATION_ANNOUNCE_GRACE_MS = WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS;
+// file runs, so this only has to cover zsh reaching its first sourced line — but
+// getting it wrong types into a possibly-blocked shell, while being slow only
+// costs latency for the rare shell that has no integration at all. So it is
+// generous: a loaded machine can take far longer than a prompt feels like it
+// should. The decision is re-checked against the worker before falling back, so
+// this bound is about the shell's own speed, not about IPC timing.
+const TERMINAL_INTEGRATION_ANNOUNCE_GRACE_MS = 5_000;
 
 interface MiddleTruncationAccumulator {
   totalBytes: number;
@@ -460,12 +465,15 @@ type ReadinessTerminal = Pick<
   | "subscribe"
   | "shellIntegrationExpected"
   | "getPromptState"
+  | "fetchPromptState"
+  | "sendInputIfAtPrompt"
   | "onPromptStateChange"
   | "onExit"
   | "getExitInfo"
+  | "send"
 >;
 
-export type TerminalNotReadyReason = "timeout" | "exited";
+export type TerminalNotReadyReason = "timeout" | "exited" | "raced";
 
 /**
  * The shell never reached a state where typing into it is safe. Thrown instead
@@ -478,13 +486,54 @@ export class TerminalNotReadyError extends Error {
     public readonly reason: TerminalNotReadyReason,
     public readonly waitedMs: number,
   ) {
-    super(
-      reason === "exited"
-        ? "The terminal's shell exited before it reached a prompt."
-        : "The terminal's shell never reached a prompt. Something in your shell startup may be " +
-            "waiting for input — answer it in the terminal, then run this again.",
-    );
+    super(TerminalNotReadyError.messageFor(reason));
     this.name = "TerminalNotReadyError";
+  }
+
+  private static messageFor(reason: TerminalNotReadyReason): string {
+    switch (reason) {
+      case "exited":
+        return "The terminal's shell exited before it reached a prompt.";
+      case "raced":
+        return "The terminal stopped being at a prompt before the command could be sent. Run it again.";
+      case "timeout":
+        return (
+          "The terminal's shell never reached a prompt. Something in your shell startup may be " +
+          "waiting for input — answer it in the terminal, then run this again."
+        );
+    }
+  }
+}
+
+/**
+ * How the readiness wait settled, and therefore what guarantee the write gets.
+ *
+ * "legacy" shells never report a prompt, so there is nothing to re-check at write
+ * time — guarding the write would mean never typing at all.
+ */
+type ReadinessOutcome = "integrated" | "legacy";
+
+/**
+ * Type the command, re-checking at write time when the shell can tell us.
+ *
+ * The readiness wait can only prove the shell WAS ready. Between that and the
+ * write a foreground command can take stdin — and for a worker-backed terminal
+ * the check and the write are two hops across a process boundary. The worker
+ * settles both together against the live session, so a lost race types nothing.
+ */
+async function sendCommandWhenAtPrompt(
+  terminal: ReadinessTerminal,
+  command: string,
+  outcome: ReadinessOutcome,
+): Promise<void> {
+  const data = `${command}\r`;
+  if (outcome === "legacy") {
+    terminal.send({ type: "input", data });
+    return;
+  }
+  const sent = await terminal.sendInputIfAtPrompt(data);
+  if (!sent) {
+    throw new TerminalNotReadyError(terminal.id, "raced", 0);
   }
 }
 
@@ -506,17 +555,17 @@ export class TerminalNotReadyError extends Error {
 async function waitForTerminalInputReadiness(
   terminal: ReadinessTerminal,
   options: { timeoutMs: number; announceGraceMs: number },
-): Promise<void> {
+): Promise<ReadinessOutcome> {
   if (!terminal.shellIntegrationExpected) {
     await waitForFirstTerminalOutput(terminal);
-    return;
+    return "legacy";
   }
 
   if (terminal.getExitInfo()) {
     throw new TerminalNotReadyError(terminal.id, "exited", 0);
   }
   if (terminal.getPromptState().atPrompt) {
-    return;
+    return "integrated";
   }
 
   const startedAt = Date.now();
@@ -573,9 +622,22 @@ async function waitForTerminalInputReadiness(
     }
 
     announceGrace = setTimeout(() => {
-      if (!terminal.getPromptState().shellIntegrationActive) {
-        settle(null, true);
+      if (terminal.getPromptState().shellIntegrationActive) {
+        return;
       }
+      // Do not conclude "no integration" from a local copy that lags by one IPC
+      // hop: an announce in flight would look exactly like silence, and the
+      // fallback types into the shell. Ask the worker, which owns the state.
+      const fallbackIfTrulySilent = async (): Promise<void> => {
+        const state = await terminal.fetchPromptState();
+        if (!state.shellIntegrationActive) {
+          settle(null, true);
+        }
+      };
+      void fallbackIfTrulySilent().catch(() => {
+        // The worker is unreachable; the readiness timeout below is the
+        // backstop. Failing there beats typing on a guess.
+      });
     }, options.announceGraceMs);
 
     timeout = setTimeout(() => {
@@ -588,7 +650,9 @@ async function waitForTerminalInputReadiness(
     // gave startup the same head start the legacy heuristic allows, so this
     // only has to confirm the terminal has produced something.
     await waitForFirstTerminalOutput(terminal);
+    return "legacy";
   }
+  return "integrated";
 }
 
 async function waitForFirstTerminalOutput(
@@ -698,14 +762,11 @@ async function runWorktreeTerminalBootstrap(
           workspaceId: options.workspaceId,
         });
         createdTerminal = terminal;
-        await waitForTerminalInputReadiness(terminal, {
+        const outcome = await waitForTerminalInputReadiness(terminal, {
           timeoutMs: TERMINAL_PROMPT_READY_TIMEOUT_MS,
           announceGraceMs: TERMINAL_INTEGRATION_ANNOUNCE_GRACE_MS,
         });
-        terminal.send({
-          type: "input",
-          data: `${spec.command}\r`,
-        });
+        await sendCommandWhenAtPrompt(terminal, spec.command, outcome);
         return {
           name: terminal.name ?? spec.name ?? null,
           command: spec.command,
@@ -1038,7 +1099,7 @@ function releaseFailedScriptSpawn(params: {
   const { error, serviceScript, scriptType, workspaceId, scriptName, terminalId, runtimeStore } =
     params;
   const preserveTerminalForRetry =
-    error instanceof TerminalNotReadyError && error.reason === "timeout" && !serviceScript;
+    error instanceof TerminalNotReadyError && error.reason !== "exited" && !serviceScript;
 
   if (!preserveTerminalForRetry || !terminalId) {
     runtimeStore.remove({ workspaceId, scriptName });
@@ -1234,11 +1295,11 @@ export async function spawnWorkspaceScript(
     // Reused terminals wait too. "It printed a prompt once" says nothing about
     // now: the user may have a foreground command running in it, and typing
     // into that interleaves the script command with the command's own input.
-    await waitForTerminalInputReadiness(terminal, {
+    const readinessOutcome = await waitForTerminalInputReadiness(terminal, {
       timeoutMs: promptReadyTimeoutMs ?? TERMINAL_PROMPT_READY_TIMEOUT_MS,
       announceGraceMs: integrationAnnounceGraceMs ?? TERMINAL_INTEGRATION_ANNOUNCE_GRACE_MS,
     });
-    terminal.send({ type: "input", data: `${config.command}\r` });
+    await sendCommandWhenAtPrompt(terminal, config.command, readinessOutcome);
 
     logger?.info(
       {

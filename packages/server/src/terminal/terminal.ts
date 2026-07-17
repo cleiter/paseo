@@ -101,6 +101,14 @@ export interface TerminalSession {
   // eaten by whatever else is reading stdin (a `read` in an rc file, a
   // foreground command).
   getPromptState(): TerminalPromptState;
+  // Authoritative read. Same value as getPromptState() here, but the worker-backed
+  // implementation round-trips instead of reading a copy that lags by one IPC hop
+  // — the difference between "has not announced" and "the announce is in flight".
+  fetchPromptState(): Promise<TerminalPromptState>;
+  // Atomic check-and-write: sends only if the shell is at its prompt at write
+  // time, and reports whether it did. Returns false rather than typing into
+  // whatever took stdin in the meantime.
+  sendInputIfAtPrompt(data: string): Promise<boolean>;
   onTitleChange(listener: (title?: string) => void): () => void;
   onActivityChange(listener: (transition: TerminalActivityTransition) => void): () => void;
   getSize(): { rows: number; cols: number };
@@ -1439,6 +1447,19 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     return { atPrompt, shellIntegrationActive };
   }
 
+  // In-process: nothing can interleave between the read and the write.
+  async function fetchPromptState(): Promise<TerminalPromptState> {
+    return getPromptState();
+  }
+
+  async function sendInputIfAtPrompt(data: string): Promise<boolean> {
+    if (!atPrompt) {
+      return false;
+    }
+    send({ type: "input", data });
+    return true;
+  }
+
   function onTitleChange(listener: (title?: string) => void): () => void {
     titleChangeListeners.add(listener);
     if (title !== undefined) {
@@ -1583,6 +1604,8 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     onCommandFinished,
     onPromptStateChange,
     getPromptState,
+    fetchPromptState,
+    sendInputIfAtPrompt,
     onTitleChange,
     onActivityChange,
     getSize,

@@ -332,10 +332,16 @@ describe("runAsyncWorktreeBootstrap", () => {
     triggerExit: (exitCode: number) => void;
     triggerCommandFinished: (exitCode: number) => void;
     setAtPrompt: (atPrompt: boolean) => void;
+    // Models the shell losing its prompt between the readiness check and the
+    // write: the worker sees the new state, so nothing is sent.
+    setAtPromptAtWriteTime: (atPrompt: boolean) => void;
     sentInputs: string[];
   }
 
   interface StubTerminalManagerOptions {
+    // Models an announce that the worker has seen but whose event has not
+    // reached the parent's cached copy yet.
+    announceOnlyVisibleToWorker?: boolean;
     // Mirrors a zsh terminal: the daemon installed the integration, so it must
     // not type until the shell reports readiness.
     shellIntegrationExpected?: boolean;
@@ -354,6 +360,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     const sessionsById = new Map<string, TerminalSession>();
     const shellIntegrationExpected = stubOptions.shellIntegrationExpected ?? false;
     const announcesIntegration = stubOptions.announcesIntegration ?? shellIntegrationExpected;
+    const announceOnlyVisibleToWorker = stubOptions.announceOnlyVisibleToWorker ?? false;
 
     return {
       async getTerminals() {
@@ -384,10 +391,15 @@ describe("runAsyncWorktreeBootstrap", () => {
             handler({ atPrompt, shellIntegrationActive: announcesIntegration });
           }
         };
+        // Whatever the atomic worker-side check would see at write time.
+        let atPromptAtWriteTime: boolean | null = null;
         terminalRecords.push({
           id: terminalId,
           sentInputs,
           setAtPrompt,
+          setAtPromptAtWriteTime: (next: boolean) => {
+            atPromptAtWriteTime = next;
+          },
           triggerCommandFinished: (exitCode) => {
             commandFinishedHandler?.({ exitCode });
           },
@@ -405,7 +417,24 @@ describe("runAsyncWorktreeBootstrap", () => {
           name: options.name ?? "Terminal",
           cwd: options.cwd,
           shellIntegrationExpected,
-          getPromptState: () => ({ atPrompt, shellIntegrationActive: announcesIntegration }),
+          getPromptState: () => ({
+            atPrompt,
+            // The parent's copy: blind to an announce still in flight.
+            shellIntegrationActive: announceOnlyVisibleToWorker ? false : announcesIntegration,
+          }),
+          // The worker's answer: authoritative.
+          fetchPromptState: async () => ({
+            atPrompt,
+            shellIntegrationActive: announcesIntegration,
+          }),
+          sendInputIfAtPrompt: async (data: string) => {
+            const readyNow = atPromptAtWriteTime ?? atPrompt;
+            if (!readyNow) {
+              return false;
+            }
+            sentInputs.push(data);
+            return true;
+          },
           onPromptStateChange: (handler) => {
             promptStateHandlers.add(handler);
             return () => {
@@ -1364,6 +1393,83 @@ describe("runAsyncWorktreeBootstrap", () => {
 
     await expect(spawned).rejects.toThrow(/exited before it reached a prompt/);
     expect(terminalRecords[0]?.sentInputs).toEqual([]);
+  });
+
+  it("does not fall back when the announce is still in flight to the parent", async () => {
+    commitPaseoScripts({ typecheck: { command: "npm run typecheck" } }, "add script config");
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    // The shell announced, but the event has not reached the parent's cached
+    // copy. Reading that copy would say "no integration" and take the legacy
+    // path — typing into a shell that may be blocked, which is the original bug.
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords, {
+      shellIntegrationExpected: true,
+      announcesIntegration: true,
+      announceOnlyVisibleToWorker: true,
+    });
+
+    await expect(
+      spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId: repoDir,
+        projectSlug: "repo",
+        branchName: "feature-announce-inflight",
+        scriptName: "typecheck",
+        daemonPort: null,
+        serviceProxy: routeStore,
+        runtimeStore,
+        terminalManager,
+        integrationAnnounceGraceMs: 5,
+        promptReadyTimeoutMs: 60,
+      } as never),
+    ).rejects.toThrow(/never reached a prompt/);
+
+    // Failed closed instead of typing on a stale read.
+    expect(terminalRecords[0]?.sentInputs).toEqual([]);
+  });
+
+  it("types nothing when the shell loses its prompt before the write lands", async () => {
+    commitPaseoScripts({ typecheck: { command: "npm run typecheck" } }, "add script config");
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords, {
+      shellIntegrationExpected: true,
+      startsAtPrompt: true,
+    });
+
+    // The readiness check passes, then a foreground command takes stdin before
+    // the write reaches the pty. The write must be refused, not interleaved
+    // into whatever is now reading.
+    await waitForCondition(() => true);
+    const spawned = spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-write-race",
+      scriptName: "typecheck",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager,
+      promptReadyTimeoutMs: 40,
+    } as never);
+    await waitForCondition(() => terminalRecords.length === 1);
+    terminalRecords[0]?.setAtPromptAtWriteTime(false);
+
+    await expect(spawned).rejects.toThrow(/stopped being at a prompt/);
+    expect(terminalRecords[0]?.sentInputs).toEqual([]);
+    // A lost race keeps the terminal, exactly like a readiness timeout: re-running
+    // is the recovery, and it should reuse the shell that is already there.
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "typecheck" })).toMatchObject({
+      lifecycle: "stopped",
+      terminalId: terminalRecords[0]?.id,
+    });
   });
 
   it("falls back to typing when a zsh never announces an integration", async () => {
