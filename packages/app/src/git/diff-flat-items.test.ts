@@ -11,6 +11,9 @@ function summarize(items: DiffFlatItem[]): string[] {
     if (item.type === "folder") {
       return `${"  ".repeat(item.depth)}[${item.displayName}]${item.collapsed ? " (collapsed)" : ""}`;
     }
+    if (item.type === "dirLabel") {
+      return `${item.dirPath}/`;
+    }
     const base = item.file.path.split("/").pop();
     return `${"  ".repeat(item.depth)}${item.type === "body" ? "body:" : ""}${base}`;
   });
@@ -33,7 +36,7 @@ describe("buildDiffFlatItems", () => {
     expect(items[0].type).toBe("header");
   });
 
-  it("emits the old flat list without folder rows or indentation", () => {
+  it("groups flat files under directory-path labels, never folder rows", () => {
     const { items, stickyHeaderIndices } = buildDiffFlatItems({
       files,
       viewMode: "flat",
@@ -41,9 +44,60 @@ describe("buildDiffFlatItems", () => {
       expandedPaths: new Set(["src/app/a.ts"]),
     });
 
-    expect(summarize(items)).toEqual(["a.ts", "body:a.ts", "b.ts"]);
-    expect(stickyHeaderIndices).toEqual([0]);
+    // Each file sits under its own directory label; the label is not indented and
+    // sticky indices still point only at expanded file headers.
+    expect(summarize(items)).toEqual(["src/app/", "a.ts", "body:a.ts", "src/app/nested/", "b.ts"]);
+    expect(stickyHeaderIndices).toEqual([1]);
     expect(items.every((item) => item.type !== "folder")).toBe(true);
+  });
+
+  it("shares one directory label for consecutive files in the same directory", () => {
+    const { items } = buildDiffFlatItems({
+      files: [createFile("src/a.ts"), createFile("src/b.ts")],
+      viewMode: "flat",
+      collapsedFolders: new Set(),
+      expandedPaths: new Set(),
+    });
+    expect(summarize(items)).toEqual(["src/", "a.ts", "b.ts"]);
+  });
+
+  it("emits no directory label for root-level files in flat mode", () => {
+    const { items } = buildDiffFlatItems({
+      files: [createFile("a.ts"), createFile("b.ts")],
+      viewMode: "flat",
+      collapsedFolders: new Set(),
+      expandedPaths: new Set(),
+    });
+    expect(summarize(items)).toEqual(["a.ts", "b.ts"]);
+    expect(items.every((item) => item.type === "header")).toBe(true);
+  });
+
+  it("indents a flat file only when a directory label was emitted above it", () => {
+    // A root file has no label, so indenting it would indent it under nothing.
+    const { items } = buildDiffFlatItems({
+      files: [createFile("README.md"), createFile("src/a.ts")],
+      viewMode: "flat",
+      collapsedFolders: new Set(),
+      expandedPaths: new Set(),
+    });
+    expect(summarize(items)).toEqual(["README.md", "src/", "a.ts"]);
+    const headers = items.filter((item) => item.type === "header");
+    expect(headers.map((h) => (h.type === "header" ? h.underDirLabel : null))).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  it("never marks tree-mode files as sitting under a flat directory label", () => {
+    // Tree mode indents via `depth`; underDirLabel is a flat-list concern only.
+    const { items } = buildDiffFlatItems({
+      files,
+      viewMode: "tree",
+      collapsedFolders: new Set(),
+      expandedPaths: new Set(),
+    });
+    const headers = items.filter((item) => item.type === "header");
+    expect(headers.every((h) => h.type === "header" && h.underDirLabel === false)).toBe(true);
   });
 
   it("groups files under compressed folder rows, all expanded by default", () => {

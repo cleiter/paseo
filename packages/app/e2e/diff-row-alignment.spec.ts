@@ -311,9 +311,14 @@ async function useUnwrappedDiffLines(page: Page): Promise<void> {
 }
 
 async function expectFlatFileList(page: Page): Promise<void> {
+  // No collapsible folder rows — those are tree mode only.
   await expect(page.locator('[data-testid^="diff-folder-"]')).toHaveCount(0);
+  // The flat list groups files under a directory-path label instead of repeating
+  // the directory inline on every row, so `src` now sits above the file rather
+  // than beside it. This assertion previously required the inline suffix.
+  await expect(page.getByTestId("diff-dir-label-src")).toContainText("src/");
   await expect(page.getByTestId("diff-file-0")).toContainText("use-mounted-tab-set.ts");
-  await expect(page.getByTestId("diff-file-0")).toContainText("src");
+  await expect(page.getByTestId("diff-file-0")).not.toContainText("src");
 }
 
 async function expectDiffCodeFontSize(page: Page, fontSize: number): Promise<void> {

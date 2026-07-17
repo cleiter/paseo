@@ -19,7 +19,24 @@ export type DiffFlatItem =
       additions: number;
       deletions: number;
     }
-  | { type: "header"; file: ParsedDiffFile; fileIndex: number; isExpanded: boolean; depth: number }
+  // Flat-view directory group header. Files are grouped by their directory and
+  // listed under a plain path label (GitLab-style), so the filename row no longer
+  // carries an inline dir suffix. Never emitted in tree mode.
+  | { type: "dirLabel"; dirPath: string }
+  | {
+      type: "header";
+      file: ParsedDiffFile;
+      fileIndex: number;
+      isExpanded: boolean;
+      depth: number;
+      /**
+       * Flat mode: a `dirLabel` was emitted above this file, so the row is
+       * indented one level under it. Root-level files get no label and so are
+       * not indented — there is nothing above them to indent under. Always
+       * false in tree mode, where `depth` drives indentation instead.
+       */
+      underDirLabel: boolean;
+    }
   | { type: "body"; file: ParsedDiffFile; fileIndex: number; depth: number };
 
 export interface DiffFlatItemsResult {
@@ -29,6 +46,14 @@ export interface DiffFlatItemsResult {
 }
 
 export interface BuildDiffFlatItemsInput {
+  /**
+   * PRECONDITION: sorted by path (see `orderCheckoutDiffFiles`). Flat mode emits
+   * one directory label per *run* of same-directory files, so unsorted input
+   * silently yields a repeated label (`src/`, `lib/`, `src/` again) rather than
+   * an error. Both current callers satisfy this: the checkout diff is sorted in
+   * the push router because it merges staged/unstaged/untracked, and the commit
+   * diff inherits git's own path ordering.
+   */
   files: ParsedDiffFile[];
   viewMode: "flat" | "tree";
   /** Full uncompressed directory paths that are collapsed (empty = all expanded). */
@@ -61,9 +86,14 @@ export function buildDiffFlatItems({
   const items: DiffFlatItem[] = [];
   const stickyHeaderIndices: number[] = [];
 
-  const pushFile = (file: ParsedDiffFile, fileIndex: number, depth: number): void => {
+  const pushFile = (
+    file: ParsedDiffFile,
+    fileIndex: number,
+    depth: number,
+    underDirLabel = false,
+  ): void => {
     const isExpanded = expandedPaths.has(file.path);
-    items.push({ type: "header", file, fileIndex, isExpanded, depth });
+    items.push({ type: "header", file, fileIndex, isExpanded, depth, underDirLabel });
     if (isExpanded) {
       stickyHeaderIndices.push(items.length - 1);
       items.push({ type: "body", file, fileIndex, depth });
@@ -71,8 +101,23 @@ export function buildDiffFlatItems({
   };
 
   if (viewMode === "flat") {
+    // Files arrive path-sorted, so files sharing a directory are already
+    // consecutive: emit one directory-path label when the directory changes,
+    // then the file rows beneath it. Root-level files (no directory) get no
+    // label — there is nothing to group them under, so they are not indented
+    // either. `underDirLabel` is decided here, next to the label itself, so the
+    // indent cannot disagree with whether a label was actually emitted.
+    let currentDir: string | undefined;
     for (const [fileIndex, file] of files.entries()) {
-      pushFile(file, fileIndex, 0);
+      const slashIndex = file.path.lastIndexOf("/");
+      const dir = slashIndex === -1 ? "" : file.path.slice(0, slashIndex);
+      if (dir !== currentDir) {
+        currentDir = dir;
+        if (dir !== "") {
+          items.push({ type: "dirLabel", dirPath: dir });
+        }
+      }
+      pushFile(file, fileIndex, 0, dir !== "");
     }
     return { items, stickyHeaderIndices };
   }

@@ -202,8 +202,10 @@ interface DiffFileSectionProps {
   isExpanded: boolean;
   /** Tree indentation level (0 on the flat/mobile path). */
   depth?: number;
-  /** Show the muted directory suffix (flat list); false inside the folder tree. */
-  showDir?: boolean;
+  /** Flat list: the row sits under a directory-path label, so indent it one
+   * level to match (no tree guide lines). Root-level files have no label and
+   * so are not indented. */
+  underDirLabel?: boolean;
   interactive?: boolean;
   onToggle?: (path: string) => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
@@ -900,11 +902,47 @@ function SplitDiffColumn({
   );
 }
 
+// Material file-type icon for a diff row. Its own component so the header's JSX
+// stays inside the nesting limit, and so both view modes render it identically.
+const DiffFileIcon = memo(function DiffFileIcon({ fileName }: { fileName: string }) {
+  return (
+    <View style={styles.fileIcon}>
+      <SvgXml xml={getFileIconSvg(fileName)} width={16} height={16} />
+    </View>
+  );
+});
+
+// Flat-view directory group header: the full directory path of the files listed
+// beneath it, shown as a plain muted label with a trailing slash (GitLab-style).
+const DiffDirLabelRow = memo(function DiffDirLabelRow({
+  dirPath,
+  onHeightChange,
+  testID,
+}: {
+  dirPath: string;
+  onHeightChange?: (height: number) => void;
+  testID?: string;
+}) {
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onHeightChange?.(event.nativeEvent.layout.height);
+    },
+    [onHeightChange],
+  );
+  return (
+    <View style={styles.dirLabelRow} onLayout={handleLayout} testID={testID}>
+      <Text style={styles.dirLabelText} numberOfLines={1}>
+        {`${dirPath}/`}
+      </Text>
+    </View>
+  );
+});
+
 const DiffFileHeader = memo(function DiffFileHeader({
   file,
   isExpanded,
   depth = 0,
-  showDir = true,
+  underDirLabel = false,
   interactive = true,
   onToggle,
   onHeaderHeightChange,
@@ -967,37 +1005,34 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 
   const headerPressableStyle = useCallback(
-    (state: PressableStateCallbackType) =>
-      depth > 0
+    (state: PressableStateCallbackType) => {
+      // Flat list: files sit one level under their directory-path label, but
+      // without the tree's vertical guide lines (depth stays 0).
+      if (underDirLabel) {
+        return [fileHeaderPressableStyle(state), styles.fileHeaderFlatIndent];
+      }
+      return depth > 0
         ? [
             fileHeaderPressableStyle(state),
             inlineUnistylesStyle({ paddingLeft: treeRowPaddingLeft(depth) }),
           ]
-        : fileHeaderPressableStyle(state),
-    [depth],
+        : fileHeaderPressableStyle(state);
+    },
+    [depth, underDirLabel],
   );
 
   const fileName = file.path.split("/").pop() ?? file.path;
   const headerContent = (
     <>
       <View style={styles.fileHeaderLeft}>
-        {showDir ? null : (
-          <View style={styles.fileIcon}>
-            <SvgXml xml={getFileIconSvg(fileName)} width={16} height={16} />
-          </View>
-        )}
+        <DiffFileIcon fileName={fileName} />
         <Text style={styles.fileName} numberOfLines={1}>
           {fileName}
         </Text>
-        {showDir ? (
-          <Text style={styles.fileDir} numberOfLines={1}>
-            {file.path.includes("/") ? ` ${file.path.slice(0, file.path.lastIndexOf("/"))}` : ""}
-          </Text>
-        ) : (
-          // Flex spacer in tree mode (no dir suffix) so the New/Deleted badge
-          // stays right-aligned next to the diff stats, as in the flat list.
-          <View style={styles.fileDirSpacer} />
-        )}
+        {/* Flex spacer (no inline dir suffix — the directory is shown as a group
+            label above the file in flat mode, and by the tree in tree mode) so
+            the New/Deleted badge stays right-aligned by the stats. */}
+        <View style={styles.fileDirSpacer} />
         {file.isNew && (
           <View style={styles.newBadge}>
             <Text style={styles.newBadgeText}>{t("workspace.git.diff.newFile")}</Text>
@@ -1672,6 +1707,8 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
   const headerHeightByPathRef = useRef<Record<string, number>>({});
   const bodyHeightByKeyRef = useRef<Record<string, number>>({});
   const folderRowHeightRef = useRef<number>(0);
+  // Flat-view directory-path labels all share one height (same style).
+  const dirLabelRowHeightRef = useRef<number>(0);
   const defaultHeaderHeightRef = useRef<number>(44);
   const [heightVersion, setHeightVersion] = useState(0);
   const diffBodyChromeHeight = BORDER_WIDTH[1] * 2;
@@ -1731,6 +1768,9 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       if (item.type === "folder") {
         return folderRowHeightRef.current || defaultHeaderHeightRef.current;
       }
+      if (item.type === "dirLabel") {
+        return dirLabelRowHeightRef.current || DIFF_DIR_LABEL_ESTIMATED_HEIGHT;
+      }
       if (item.type === "header") {
         return headerHeightByPathRef.current[item.file.path] ?? defaultHeaderHeightRef.current;
       }
@@ -1749,6 +1789,18 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       return;
     }
     folderRowHeightRef.current = height;
+    setHeightVersion((version) => version + 1);
+  }, []);
+
+  const handleDirLabelHeightChange = useCallback((height: number) => {
+    if (!Number.isFinite(height) || height <= 0) {
+      return;
+    }
+    const previousHeight = dirLabelRowHeightRef.current;
+    if (previousHeight > 0 && Math.abs(previousHeight - height) <= DIFF_HEIGHT_CHANGE_EPSILON) {
+      return;
+    }
+    dirLabelRowHeightRef.current = height;
     setHeightVersion((version) => version + 1);
   }, []);
 
@@ -1901,13 +1953,22 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
           />
         );
       }
+      if (item.type === "dirLabel") {
+        return (
+          <DiffDirLabelRow
+            dirPath={item.dirPath}
+            onHeightChange={handleDirLabelHeightChange}
+            testID={`diff-dir-label-${item.dirPath}`}
+          />
+        );
+      }
       if (item.type === "header") {
         return (
           <DiffFileHeader
             file={item.file}
             isExpanded={item.isExpanded}
             depth={item.depth}
-            showDir={viewMode === "flat"}
+            underDirLabel={item.underDirLabel}
             interactive={interactive}
             onToggle={interactive ? handleToggleExpanded : undefined}
             onHeaderHeightChange={handleHeaderHeightChange}
@@ -1931,6 +1992,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     [
       codeFontSize,
       handleBodyHeightChange,
+      handleDirLabelHeightChange,
       handleFolderRowHeightChange,
       handleHeaderHeightChange,
       handleToggleExpanded,
@@ -1938,17 +2000,20 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       layout,
       reviewActions,
       textMetricsStyle,
-      viewMode,
       wrapLines,
       interactive,
     ],
   );
 
-  const flatKeyExtractor = useCallback(
-    (item: DiffFlatItem) =>
-      item.type === "folder" ? `folder-${item.dirPath}` : `${item.type}-${item.file.path}`,
-    [],
-  );
+  const flatKeyExtractor = useCallback((item: DiffFlatItem) => {
+    if (item.type === "folder") {
+      return `folder-${item.dirPath}`;
+    }
+    if (item.type === "dirLabel") {
+      return `dirLabel-${item.dirPath}`;
+    }
+    return `${item.type}-${item.file.path}`;
+  }, []);
 
   const getFlatItemLayout = useCallback<DiffFlatItemLayoutGetter>(
     (_data, index) => {
@@ -2756,11 +2821,25 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     minWidth: 0,
   },
-  fileDir: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
+  // Flat list: indent a file one level under its directory-path label. Matches a
+  // single tree level (treeRowPaddingLeft(1)) but draws no vertical guide line.
+  fileHeaderFlatIndent: {
+    paddingLeft: treeRowPaddingLeft(1),
+  },
+  // Padding is asymmetric on purpose: the gap above separates this group from
+  // the previous one, while no gap below leaves the label attached to its own
+  // files (the file row's own top padding supplies that space). Keeps the label
+  // cheap in vertical space — it is pure overhead on top of the file rows.
+  dirLabelRow: {
+    paddingLeft: theme.spacing[3],
+    paddingRight: theme.spacing[2],
+    paddingTop: theme.spacing[2],
+    minWidth: 0,
+  },
+  dirLabelText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
     color: theme.colors.foregroundMuted,
-    flex: 1,
     minWidth: 0,
   },
   fileDirSpacer: {
@@ -2961,3 +3040,5 @@ const FILE_SECTION_BODY_STYLE = [styles.fileSectionBodyContainer, styles.fileSec
 const DIFF_CONTENT_SPLIT_ROW_STYLE = [styles.diffContent, styles.splitRow];
 const DIFF_CONTENT_ROW_STYLE = [styles.diffContent, styles.diffContentRow];
 const DIFF_HEIGHT_CHANGE_EPSILON = 0.5;
+// getItemLayout fallback for a flat-view directory label before it is measured.
+const DIFF_DIR_LABEL_ESTIMATED_HEIGHT = 24;
