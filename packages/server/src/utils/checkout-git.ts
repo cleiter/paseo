@@ -1087,6 +1087,12 @@ async function resolveBaseRefForCwd(
   };
 }
 
+// Names both refs rather than labelling either one correct: a caller's ref can be stale, but the
+// stored ref can equally be wrong, so the message states the two facts and leaves the diagnosis open.
+function baseRefMismatchError(refs: { stored: string; requested: string }): Error {
+  return new Error(`Base ref mismatch: stored ${refs.stored}, requested ${refs.requested}`);
+}
+
 async function isWorkingTreeDirty(cwd: string, context?: CheckoutContext): Promise<boolean> {
   const { stdout } = await runGitCommand(["status", "--porcelain"], {
     cwd,
@@ -2753,7 +2759,7 @@ async function resolveCheckoutDiffRefs(
     return null;
   }
   if (storedBaseRef && compare.baseRef && compare.baseRef !== storedBaseRef) {
-    throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
+    throw baseRefMismatchError({ stored: storedBaseRef, requested: compare.baseRef });
   }
   const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
   return {
@@ -2967,7 +2973,7 @@ export async function mergeToBase(
     throw new Error("Unable to determine base branch for merge");
   }
   if (storedBaseRef && options.baseRef && options.baseRef !== storedBaseRef) {
-    throw new Error(`Base ref mismatch: expected ${baseRef}, got ${options.baseRef}`);
+    throw baseRefMismatchError({ stored: storedBaseRef, requested: options.baseRef });
   }
   if (!currentBranch) {
     throw new Error("Unable to determine current branch for merge");
@@ -3043,7 +3049,7 @@ export async function mergeFromBase(
     throw new Error("Unable to determine base branch for merge");
   }
   if (storedBaseRef && options.baseRef && options.baseRef !== storedBaseRef) {
-    throw new Error(`Base ref mismatch: expected ${baseRef}, got ${options.baseRef}`);
+    throw baseRefMismatchError({ stored: storedBaseRef, requested: options.baseRef });
   }
 
   const requireCleanTarget = options.requireCleanTarget ?? true;
@@ -3381,7 +3387,7 @@ export async function createPullRequest(
   }
   const normalizedBase = normalizeLocalBranchRefName(base);
   if (storedBaseRef && options.base && options.base !== storedBaseRef) {
-    throw new Error(`Base ref mismatch: expected ${base}, got ${options.base}`);
+    throw baseRefMismatchError({ stored: storedBaseRef, requested: options.base });
   }
 
   // The push deliberately happens before the adapter resolves the target
