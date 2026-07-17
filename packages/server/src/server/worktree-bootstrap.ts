@@ -1166,6 +1166,18 @@ function rollbackFailedScriptSpawn(params: {
   });
 }
 
+// A shell that never reached its prompt is a normal interaction (usually a
+// startup prompt waiting to be answered), not a fault — the terminal is kept for
+// the user to answer in. Log it quietly; only genuine failures are errors.
+function logScriptSpawnFailure(
+  logger: Logger | undefined,
+  error: unknown,
+  context: Record<string, unknown>,
+): void {
+  const level = error instanceof TerminalNotReadyError ? "debug" : "error";
+  logger?.[level]({ err: error, ...context }, "Failed to spawn worktree script");
+}
+
 export async function spawnWorkspaceScript(
   options: SpawnWorkspaceScriptOptions,
 ): Promise<WorktreeScriptResult> {
@@ -1360,18 +1372,14 @@ export async function spawnWorkspaceScript(
       runtimeStore,
       onLifecycleChanged,
     });
-    logger?.error(
-      {
-        err: error,
-        scriptName,
-        repoRoot,
-        branchName,
-        hostname,
-        port,
-        command: config.command,
-      },
-      "Failed to spawn worktree script",
-    );
+    logScriptSpawnFailure(logger, error, {
+      scriptName,
+      repoRoot,
+      branchName,
+      hostname,
+      port,
+      command: config.command,
+    });
     throw error;
   }
 }

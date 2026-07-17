@@ -374,9 +374,9 @@ function handlePromptStateRequest(
     return;
   }
 
-  const sent = Boolean(session?.getPromptState().atPrompt);
-  if (sent) {
-    session?.send({ type: "input", data: message.data });
+  const sent = Boolean(session && session.getPromptState().atPrompt);
+  if (session && sent) {
+    session.send({ type: "input", data: message.data });
   }
   sendToParent({
     type: "response",
