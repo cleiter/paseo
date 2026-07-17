@@ -490,6 +490,15 @@ export class TerminalNotReadyError extends Error {
     this.name = "TerminalNotReadyError";
   }
 
+  /**
+   * Whether `terminalId` still refers to a live terminal. An exited shell has
+   * already been reaped, so pointing anyone at it would open a dead tab; every
+   * other reason leaves the terminal open holding the reason it failed.
+   */
+  get terminalStillOpen(): boolean {
+    return this.reason !== "exited";
+  }
+
   private static messageFor(reason: TerminalNotReadyReason): string {
     switch (reason) {
       case "exited":
@@ -930,6 +939,11 @@ export interface SpawnWorkspaceScriptOptions {
   // Overridable so tests can exercise the timeout without waiting it out.
   promptReadyTimeoutMs?: number;
   integrationAnnounceGraceMs?: number;
+  // Fired the moment the terminal exists and is registered, before the command
+  // is typed. Lets the caller hand the terminal to clients immediately — the
+  // same instant a plain terminal is handed over — instead of after the shell
+  // reaches its prompt, which can take the full readiness timeout.
+  onTerminalReady?: (terminalId: string) => void;
 }
 
 interface ServiceScriptSetupResult {
@@ -1099,7 +1113,7 @@ function releaseFailedScriptSpawn(params: {
   const { error, serviceScript, scriptType, workspaceId, scriptName, terminalId, runtimeStore } =
     params;
   const preserveTerminalForRetry =
-    error instanceof TerminalNotReadyError && error.reason !== "exited" && !serviceScript;
+    error instanceof TerminalNotReadyError && error.terminalStillOpen && !serviceScript;
 
   if (!preserveTerminalForRetry || !terminalId) {
     runtimeStore.remove({ workspaceId, scriptName });
@@ -1172,6 +1186,7 @@ export async function spawnWorkspaceScript(
     onLifecycleChanged,
     promptReadyTimeoutMs,
     integrationAnnounceGraceMs,
+    onTerminalReady,
   } = options;
   const configResult = readPaseoConfig(repoRoot);
   if (!configResult.ok) {
@@ -1241,6 +1256,14 @@ export async function spawnWorkspaceScript(
       exitCode: null,
     });
     runtimeRegistered = true;
+    // Hand the terminal over now, not after the command is typed. Reaching a
+    // prompt can take the full readiness timeout, and the reason it is taking
+    // that long — a startup prompt waiting to be answered — is visible in this
+    // terminal the whole time. Announcing now lets a client focus the tab
+    // immediately (like a plain terminal) and see the prompt; answering it lets
+    // the still-running readiness wait finish and type the command on its own.
+    onLifecycleChanged?.();
+    onTerminalReady?.(terminal.id);
 
     const stopRuntimeIfCurrent = (input: { exitCode: number | null; removeRoute: boolean }) => {
       const current = runtimeStore.get({ workspaceId, scriptName });
