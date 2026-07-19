@@ -928,6 +928,7 @@ export const ar: TranslationResources = {
     actions: {
       addProject: "إضافة مشروع",
       newWorkspace: "مساحة عمل جديدة",
+      commandCenter: "مركز الأوامر",
       hosts: "المضيفون",
       home: "بيت",
       settings: "إعدادات",

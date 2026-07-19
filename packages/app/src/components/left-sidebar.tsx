@@ -4,8 +4,8 @@ import {
   FolderPlus,
   History,
   Home,
+  LayoutGrid,
   Plus,
-  Search,
   Server,
   Settings,
   X,
@@ -98,6 +98,7 @@ interface SidebarSharedProps {
 interface SidebarLabels {
   addProject: string;
   newWorkspace: string;
+  commandCenter: string;
   hosts: string;
   home: string;
   settings: string;
@@ -220,6 +221,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     (): SidebarLabels => ({
       addProject: t("sidebar.actions.addProject"),
       newWorkspace: t("sidebar.actions.newWorkspace"),
+      commandCenter: t("sidebar.actions.commandCenter"),
       hosts: t("sidebar.actions.hosts"),
       home: t("sidebar.actions.home"),
       settings: t("sidebar.actions.settings"),
@@ -522,6 +524,37 @@ const SidebarNewWorkspaceHeaderRow = memo(function SidebarNewWorkspaceHeaderRow(
   );
 });
 
+const SidebarCommandCenterHeaderRow = memo(function SidebarCommandCenterHeaderRow({
+  label,
+  testID,
+  variant,
+  onBeforeOpen,
+}: {
+  label: string;
+  testID: string;
+  variant: "header" | "compact";
+  onBeforeOpen?: () => void;
+}) {
+  const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
+  const commandCenterKeys = useShortcutKeys("toggle-command-center");
+
+  const handlePress = useCallback(() => {
+    onBeforeOpen?.();
+    setCommandCenterOpen(true);
+  }, [onBeforeOpen, setCommandCenterOpen]);
+
+  return (
+    <SidebarHeaderRow
+      icon={LayoutGrid}
+      label={label}
+      onPress={handlePress}
+      testID={testID}
+      variant={variant}
+      shortcutKeys={commandCenterKeys}
+    />
+  );
+});
+
 function SidebarFooter({
   theme,
   handleOpenProject,
@@ -672,6 +705,12 @@ function MobileSidebar({
             isActive={isSchedulesActive}
             testID="sidebar-schedules"
             variant="compact"
+          />
+          <SidebarCommandCenterHeaderRow
+            label={labels.commandCenter}
+            testID="sidebar-command-center"
+            variant="compact"
+            onBeforeOpen={closeSidebar}
           />
         </View>
         <WindowChromeSafeArea placement="inline" style={styles.mobileCloseButtonRow}>
@@ -857,6 +896,11 @@ function DesktopSidebar({
               testID="sidebar-schedules"
               variant="compact"
             />
+            <SidebarCommandCenterHeaderRow
+              label={labels.commandCenter}
+              testID="sidebar-command-center"
+              variant="compact"
+            />
           </View>
         </View>
 
@@ -902,45 +946,10 @@ function DesktopSidebar({
 }
 
 function WorkspacesSectionHeader() {
-  const { theme } = useUnistyles();
-  const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
-  const commandCenterKeys = useShortcutKeys("toggle-command-center");
-  const handleSearchPress = useCallback(() => setCommandCenterOpen(true), [setCommandCenterOpen]);
-  const searchButtonStyle = useCallback(
-    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.workspacesHeaderIconButton,
-      (hovered || pressed) && styles.workspacesHeaderIconButtonHovered,
-    ],
-    [],
-  );
-
   return (
     <View style={styles.workspacesSectionHeader}>
       <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
       <View style={styles.workspacesSectionActions}>
-        <Tooltip delayDuration={300}>
-          <TooltipTrigger asChild>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open command center"
-              testID="sidebar-command-center-search"
-              style={searchButtonStyle}
-              onPress={handleSearchPress}
-            >
-              {({ hovered, pressed }) => (
-                <Search
-                  size={14}
-                  color={
-                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
-                  }
-                />
-              )}
-            </Pressable>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center" offset={8}>
-            <IconTooltipContent label="Search" shortcutKeys={commandCenterKeys} />
-          </TooltipContent>
-        </Tooltip>
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <View>
@@ -1005,16 +1014,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-  },
-  workspacesHeaderIconButton: {
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.md,
-  },
-  workspacesHeaderIconButtonHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   sidebarContent: {
     flex: 1,

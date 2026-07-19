@@ -938,6 +938,7 @@ export const en = {
     actions: {
       addProject: "Add project",
       newWorkspace: "New workspace",
+      commandCenter: "Command Center",
       hosts: "Hosts",
       home: "Home",
       settings: "Settings",

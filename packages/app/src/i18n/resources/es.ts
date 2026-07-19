@@ -959,6 +959,7 @@ export const es: TranslationResources = {
     actions: {
       addProject: "Agregar proyecto",
       newWorkspace: "Nuevo espacio de trabajo",
+      commandCenter: "Centro de comandos",
       hosts: "Hosts",
       home: "Hogar",
       settings: "Ajustes",

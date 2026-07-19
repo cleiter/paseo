@@ -950,6 +950,7 @@ export const ru: TranslationResources = {
     actions: {
       addProject: "Добавить проект",
       newWorkspace: "Новое рабочее пространство",
+      commandCenter: "Командный центр",
       hosts: "Хосты",
       home: "Дом",
       settings: "Настройки",

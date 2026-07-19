@@ -939,6 +939,7 @@ export const ja: TranslationResources = {
     actions: {
       addProject: "プロジェクトを追加",
       newWorkspace: "新しいワークスペース",
+      commandCenter: "コマンドセンター",
       hosts: "ホスト",
       home: "ホーム",
       settings: "設定",
