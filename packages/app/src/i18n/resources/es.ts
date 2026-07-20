@@ -958,6 +958,51 @@ export const es: TranslationResources = {
     pinned: {
       title: "Anclados",
     },
+    group: {
+      create: "Crear",
+      save: "Guardar",
+      cancel: "Cancelar",
+      deleteConfirm: "Eliminar",
+    },
+    projectGroup: {
+      noGroup: "Proyectos sin grupo",
+      moveToGroup: "Mover a grupo de proyectos",
+      moveToNewGroup: "Nuevo grupo de proyectos...",
+      removeFromGroup: "Quitar del grupo de proyectos",
+      rename: "Renombrar grupo de proyectos",
+      delete: "Eliminar grupo de proyectos",
+      newGroupTitle: "Nuevo grupo de proyectos",
+      newGroupPlaceholder: "Nombre del grupo de proyectos",
+      renameGroupTitle: "Renombrar grupo de proyectos",
+      actions: {
+        menu: "Acciones del grupo de proyectos",
+      },
+      confirmations: {
+        deleteTitle: "¿Eliminar el grupo de proyectos?",
+        deleteMessage:
+          '¿Eliminar "{{groupName}}"?\n\nNo se elimina ningún proyecto: vuelven a Proyectos sin grupo.',
+      },
+    },
+    workspaceGroup: {
+      noGroup: "Espacios de trabajo sin grupo",
+      newGroup: "Nuevo grupo de espacios de trabajo...",
+      moveToGroup: "Mover a grupo de espacios de trabajo",
+      moveToNewGroup: "Nuevo grupo de espacios de trabajo...",
+      removeFromGroup: "Quitar del grupo de espacios de trabajo",
+      rename: "Renombrar grupo de espacios de trabajo",
+      delete: "Eliminar grupo de espacios de trabajo",
+      newGroupTitle: "Nuevo grupo de espacios de trabajo",
+      newGroupPlaceholder: "Nombre del grupo de espacios de trabajo",
+      renameGroupTitle: "Renombrar grupo de espacios de trabajo",
+      actions: {
+        menu: "Acciones del grupo de espacios de trabajo",
+      },
+      confirmations: {
+        deleteTitle: "¿Eliminar el grupo de espacios de trabajo?",
+        deleteMessage:
+          '¿Eliminar "{{groupName}}"?\n\nNo se elimina ningún espacio de trabajo: vuelven a Espacios de trabajo sin grupo.',
+      },
+    },
     host: {
       noHost: "Sin anfitrión",
       switchTitle: "Cambiar de anfitrión",

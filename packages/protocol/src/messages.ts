@@ -911,6 +911,88 @@ export const WorkspaceRecoveryRestoreRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// The sidebar layout is a single user-level document, not an attribute on each
+// project/workspace record. Groups have to be real entities: an attribute cannot
+// represent an empty group (it would vanish when its last member left) and cannot
+// carry an order of its own.
+//
+// The daemon is a sync substrate here, not a domain owner. It stores and serves the
+// document without interpreting it, and never enumerates group membership. The keys
+// below are opaque to the server: `projectKey` is the client's derived project id and
+// `workspaceKey` is `<serverId>:<workspaceId>`. A key the current client cannot
+// resolve (a workspace on a host it is not connected to) is pruned at render and
+// KEPT in storage, so viewing your sidebar from one machine never destroys the parts
+// of it that belong to another.
+export const SidebarProjectGroupSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  // Ordered. Array order is the order the members render in.
+  projectKeys: z.array(z.string()),
+});
+
+export const SidebarWorkspaceGroupSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  // Workspace groups are scoped to one project; a group never spans projects.
+  projectKey: z.string(),
+  workspaceKeys: z.array(z.string()),
+});
+
+// Array order IS the order, at every level: groups render in the order they appear in
+// `projectGroups`/`workspaceGroups`, their members in the order of the group's own key
+// array, and the ungrouped remainder last. There is no `order: number` anywhere, so
+// there is nothing to renumber and no way for two writers to disagree about a rank.
+//
+// With no groups this degenerates exactly into the flat drag order the sidebar has
+// always had: `ungroupedProjectKeys` is the old projectOrder and
+// `ungroupedWorkspaceKeysByProject` is the old workspaceOrderByProject. That is the
+// opt-in invariant — a user who never makes a group gets the sidebar they have today.
+export const SidebarLayoutSchema = z.object({
+  // The version of the DOCUMENT, not of any one daemon's copy of it. The client assigns
+  // it (winner.revision + 1) and every replica carries the same number for the same
+  // content. A daemon-side counter would break convergence: two hosts offline for
+  // different lengths of time would hold identical content under different revisions,
+  // and healing the lower one from the higher one would never close the gap.
+  //
+  // The daemon only refuses a write whose expectedRevision no longer matches, or one
+  // that would move the document backwards.
+  revision: z.number().int().nonnegative(),
+  updatedAt: z.string(),
+  projectGroups: z.array(SidebarProjectGroupSchema),
+  workspaceGroups: z.array(SidebarWorkspaceGroupSchema),
+  ungroupedProjectKeys: z.array(z.string()),
+  ungroupedWorkspaceKeysByProject: z.record(z.string(), z.array(z.string())),
+  // The order of the Pinned section at the top of the sidebar.
+  //
+  // A SEPARATE order from the group ones, and it deliberately overlaps them: a pinned
+  // workspace keeps its place inside its group, because that is exactly where unpinning has
+  // to put it back. Pinning hoists a row at RENDER; it does not move it in the document.
+  //
+  // ORDER only. Whether a workspace is pinned is `pinnedAt` on the workspace record, which
+  // the daemon that owns that workspace already stores and syncs. The order cannot live
+  // there: the Pinned section is one list spanning every daemon, so no single daemon can own
+  // it — the same reason groups live in this document rather than on the records.
+  //
+  // Optional so a document written before this field existed still parses. A pinned
+  // workspace missing from it falls to the top by pinnedAt, which is what the sidebar did
+  // before the order existed at all.
+  pinnedWorkspaceKeys: z.array(z.string()).optional(),
+});
+
+export const SidebarLayoutGetRequestSchema = z.object({
+  type: z.literal("sidebar.layout.get.request"),
+  requestId: z.string(),
+});
+
+export const SidebarLayoutSetRequestSchema = z.object({
+  type: z.literal("sidebar.layout.set.request"),
+  layout: SidebarLayoutSchema,
+  // The revision the client read before editing. The daemon rejects the write if it
+  // has moved on, and hands back the authoritative document so the client can re-apply.
+  expectedRevision: z.number().int().nonnegative(),
+  requestId: z.string(),
+});
+
 export const SetVoiceModeMessageSchema = z.object({
   type: z.literal("set_voice_mode"),
   enabled: z.boolean(),
@@ -1663,6 +1745,35 @@ export const WorkspaceRecoveryRestoreResponseSchema = z.object({
     accepted: z.boolean(),
     error: z.string().nullable(),
   }),
+});
+
+export const SidebarLayoutGetResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  layout: SidebarLayoutSchema,
+});
+
+export const SidebarLayoutGetResponseSchema = z.object({
+  type: z.literal("sidebar.layout.get.response"),
+  payload: SidebarLayoutGetResponsePayloadSchema,
+});
+
+// `layout` is ALWAYS the authoritative document, accepted or not. A rejected write
+// therefore carries everything the client needs to re-apply its edit on top of the
+// newer revision, without a second round trip.
+//
+// Deliberately a flat `accepted: boolean` rather than a discriminated `ok: true|false`
+// union: zod-aot miscompiles boolean discriminators (see the project-config responses,
+// which fall back to z.union for the same reason).
+export const SidebarLayoutSetResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  accepted: z.boolean(),
+  layout: SidebarLayoutSchema,
+  error: z.string().nullable(),
+});
+
+export const SidebarLayoutSetResponseSchema = z.object({
+  type: z.literal("sidebar.layout.set.response"),
+  payload: SidebarLayoutSetResponsePayloadSchema,
 });
 
 export const SetVoiceModeResponseMessageSchema = z.object({
@@ -2552,6 +2663,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspacePinSetRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
+  SidebarLayoutGetRequestSchema,
+  SidebarLayoutSetRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
@@ -2946,6 +3059,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
+        // COMPAT(sidebarLayout): added in v0.1.108, remove gate after 2027-01-14.
+        sidebarLayout: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3041,6 +3156,16 @@ export const DaemonConfigChangedStatusPayloadSchema = z
   })
   .passthrough();
 
+// Broadcast to every connected session whenever the layout document changes, so a
+// second device reflects a group edit without polling. This is what makes the sidebar
+// the same on your desktop and your phone.
+export const SidebarLayoutChangedStatusPayloadSchema = z
+  .object({
+    status: z.literal("sidebar_layout_changed"),
+    layout: SidebarLayoutSchema,
+  })
+  .passthrough();
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -3049,6 +3174,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   ShutdownRequestedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
+  SidebarLayoutChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
@@ -5423,6 +5549,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspacePinSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
+  SidebarLayoutGetResponseSchema,
+  SidebarLayoutSetResponseSchema,
   WaitForFinishResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
@@ -5613,6 +5741,12 @@ export type WorkspaceTitleSetResponsePayload = z.infer<
   typeof WorkspaceTitleSetResponsePayloadSchema
 >;
 export type WorkspacePinSetResponse = z.infer<typeof WorkspacePinSetResponseSchema>;
+export type SidebarLayout = z.infer<typeof SidebarLayoutSchema>;
+export type SidebarProjectGroup = z.infer<typeof SidebarProjectGroupSchema>;
+export type SidebarWorkspaceGroup = z.infer<typeof SidebarWorkspaceGroupSchema>;
+export type SidebarLayoutGetResponse = z.infer<typeof SidebarLayoutGetResponseSchema>;
+export type SidebarLayoutSetResponse = z.infer<typeof SidebarLayoutSetResponseSchema>;
+export type SidebarLayoutSetResponsePayload = z.infer<typeof SidebarLayoutSetResponsePayloadSchema>;
 export type WorkspacePinSetResponsePayload = z.infer<typeof WorkspacePinSetResponsePayloadSchema>;
 export type WorkspaceRecoveryState = z.infer<typeof WorkspaceRecoveryStateSchema>;
 export type WorkspaceRecoveryInspectResponse = z.infer<
@@ -5761,6 +5895,8 @@ export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSc
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
 export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryInspectRequestSchema>;
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
+export type SidebarLayoutGetRequest = z.infer<typeof SidebarLayoutGetRequestSchema>;
+export type SidebarLayoutSetRequest = z.infer<typeof SidebarLayoutSetRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;

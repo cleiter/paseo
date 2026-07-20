@@ -45,6 +45,12 @@ import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { defaultHostAppearance } from "@/hosts/appearance";
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+const testQueryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
+
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
     getItem: vi.fn().mockResolvedValue(null),
@@ -322,8 +328,15 @@ async function renderProbe(counts: RenderCounts): Promise<{ root: Root; containe
   return { root, container };
 }
 
+// The sidebar reads its order from the layout document now, which is a replica query, so
+// it needs a QueryClient. Nothing here exercises the layout — the client just has to exist
+// for useSidebarLayout to mount.
 function renderSidebarFrame(root: Root, counts: RenderCounts) {
-  root.render(<SidebarFrameProbe counts={counts} />);
+  root.render(
+    <QueryClientProvider client={testQueryClient}>
+      <SidebarFrameProbe counts={counts} />
+    </QueryClientProvider>,
+  );
 }
 
 describe("sidebar workspace render isolation", () => {

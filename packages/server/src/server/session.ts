@@ -11,6 +11,7 @@ import {
   type FirstAgentContext,
   type SessionInboundMessage,
   type SessionOutboundMessage,
+  type SidebarLayoutSetRequest,
   type GitSetupOptions,
   type StartWorkspaceScriptRequest,
   type WorkspaceScriptListRequest,
@@ -141,6 +142,7 @@ import {
   type WorkspaceMutation,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
+import type { SidebarLayoutStore } from "./sidebar-layout-store.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
@@ -433,6 +435,7 @@ export interface SessionOptions {
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  sidebarLayoutStore: SidebarLayoutStore;
   filesystem?: SessionFileSystem;
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
@@ -606,6 +609,7 @@ export class Session {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly sidebarLayoutStore: SidebarLayoutStore;
   private readonly filesystem: SessionFileSystem;
   private readonly github: ForgeService;
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
@@ -685,6 +689,7 @@ export class Session {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      sidebarLayoutStore,
       filesystem,
       chatService,
       scheduleService,
@@ -751,6 +756,7 @@ export class Session {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
+    this.sidebarLayoutStore = sidebarLayoutStore;
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -1831,6 +1837,7 @@ export class Session {
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceRecoveryMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg) ??
+      this.dispatchSidebarLayoutMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
@@ -2152,6 +2159,20 @@ export class Session {
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+      default:
+        return undefined;
+    }
+  }
+
+  // Its own dispatcher rather than a couple of cases in the workspace one: the sidebar
+  // layout is a distinct user-level document, and folding it in tipped that switch over the
+  // complexity limit.
+  private dispatchSidebarLayoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "sidebar.layout.get.request":
+        return this.handleSidebarLayoutGetRequest(msg.requestId);
+      case "sidebar.layout.set.request":
+        return this.handleSidebarLayoutSetRequest(msg);
       default:
         return undefined;
     }
@@ -3047,6 +3068,55 @@ export class Session {
           workspaceId: request.workspaceId,
           accepted: false,
           error: message,
+        },
+      });
+    }
+  }
+
+  private handleSidebarLayoutGetRequest(requestId: string): Promise<void> {
+    this.emit({
+      type: "sidebar.layout.get.response",
+      payload: { requestId, layout: this.sidebarLayoutStore.get() },
+    });
+    return Promise.resolve();
+  }
+
+  private async handleSidebarLayoutSetRequest(msg: SidebarLayoutSetRequest): Promise<void> {
+    const logContext = {
+      requestId: msg.requestId,
+      expectedRevision: msg.expectedRevision,
+    };
+    this.sessionLogger.info(logContext, "session: sidebar.layout.set.request");
+
+    try {
+      const result = await this.sidebarLayoutStore.set({
+        layout: msg.layout,
+        expectedRevision: msg.expectedRevision,
+      });
+      // The authoritative layout goes back either way. A rejected write is not an
+      // error the user should ever see — it means another device got there first, and
+      // the client re-applies its edit on top of what it gets back here.
+      this.emit({
+        type: "sidebar.layout.set.response",
+        payload: {
+          requestId: msg.requestId,
+          accepted: result.status === "accepted",
+          layout: result.layout,
+          error: result.status === "stale" ? "stale_revision" : null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { ...logContext, err: error },
+        "session: sidebar.layout.set.request error",
+      );
+      this.emit({
+        type: "sidebar.layout.set.response",
+        payload: {
+          requestId: msg.requestId,
+          accepted: false,
+          layout: this.sidebarLayoutStore.get(),
+          error: getErrorMessageOr(error, "Failed to save sidebar layout"),
         },
       });
     }

@@ -927,6 +927,51 @@ export const ar: TranslationResources = {
     pinned: {
       title: "المثبتة",
     },
+    group: {
+      create: "إنشاء",
+      save: "حفظ",
+      cancel: "إلغاء",
+      deleteConfirm: "حذف",
+    },
+    projectGroup: {
+      noGroup: "مشاريع بلا مجموعة",
+      moveToGroup: "نقل إلى مجموعة مشاريع",
+      moveToNewGroup: "مجموعة مشاريع جديدة...",
+      removeFromGroup: "إزالة من مجموعة المشاريع",
+      rename: "إعادة تسمية مجموعة المشاريع",
+      delete: "حذف مجموعة المشاريع",
+      newGroupTitle: "مجموعة مشاريع جديدة",
+      newGroupPlaceholder: "اسم مجموعة المشاريع",
+      renameGroupTitle: "إعادة تسمية مجموعة المشاريع",
+      actions: {
+        menu: "إجراءات مجموعة المشاريع",
+      },
+      confirmations: {
+        deleteTitle: "حذف مجموعة المشاريع؟",
+        deleteMessage:
+          'حذف "{{groupName}}"؟\n\nلن يُحذف أي مشروع، وستعود المشاريع إلى "مشاريع بلا مجموعة".',
+      },
+    },
+    workspaceGroup: {
+      noGroup: "مساحات عمل بلا مجموعة",
+      newGroup: "مجموعة مساحات عمل جديدة...",
+      moveToGroup: "نقل إلى مجموعة مساحات عمل",
+      moveToNewGroup: "مجموعة مساحات عمل جديدة...",
+      removeFromGroup: "إزالة من مجموعة مساحات العمل",
+      rename: "إعادة تسمية مجموعة مساحات العمل",
+      delete: "حذف مجموعة مساحات العمل",
+      newGroupTitle: "مجموعة مساحات عمل جديدة",
+      newGroupPlaceholder: "اسم مجموعة مساحات العمل",
+      renameGroupTitle: "إعادة تسمية مجموعة مساحات العمل",
+      actions: {
+        menu: "إجراءات مجموعة مساحات العمل",
+      },
+      confirmations: {
+        deleteTitle: "حذف مجموعة مساحات العمل؟",
+        deleteMessage:
+          'حذف "{{groupName}}"؟\n\nلن تُحذف أي مساحة عمل، وستعود إلى "مساحات عمل بلا مجموعة".',
+      },
+    },
     host: {
       noHost: "لا مضيف",
       switchTitle: "تبديل المضيف",

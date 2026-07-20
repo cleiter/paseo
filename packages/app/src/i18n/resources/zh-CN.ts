@@ -919,6 +919,49 @@ export const zhCN: TranslationResources = {
     pinned: {
       title: "已置顶",
     },
+    group: {
+      create: "创建",
+      save: "保存",
+      cancel: "取消",
+      deleteConfirm: "删除",
+    },
+    projectGroup: {
+      noGroup: "未分组的项目",
+      moveToGroup: "移动到项目分组",
+      moveToNewGroup: "新建项目分组...",
+      removeFromGroup: "移出项目分组",
+      rename: "重命名项目分组",
+      delete: "删除项目分组",
+      newGroupTitle: "新建项目分组",
+      newGroupPlaceholder: "项目分组名称",
+      renameGroupTitle: "重命名项目分组",
+      actions: {
+        menu: "项目分组操作",
+      },
+      confirmations: {
+        deleteTitle: "删除项目分组？",
+        deleteMessage: '删除"{{groupName}}"？\n\n不会删除任何项目，它们会回到"未分组的项目"。',
+      },
+    },
+    workspaceGroup: {
+      newGroup: "新建工作区分组...",
+      noGroup: "未分组的工作区",
+      moveToGroup: "移动到工作区分组",
+      moveToNewGroup: "新建工作区分组...",
+      removeFromGroup: "移出工作区分组",
+      rename: "重命名工作区分组",
+      delete: "删除工作区分组",
+      newGroupTitle: "新建工作区分组",
+      newGroupPlaceholder: "工作区分组名称",
+      renameGroupTitle: "重命名工作区分组",
+      actions: {
+        menu: "工作区分组操作",
+      },
+      confirmations: {
+        deleteTitle: "删除工作区分组？",
+        deleteMessage: '删除"{{groupName}}"？\n\n不会删除任何工作区，它们会回到"未分组的工作区"。',
+      },
+    },
     host: {
       noHost: "没有 Host",
       switchTitle: "切换 Host",

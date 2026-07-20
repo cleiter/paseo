@@ -101,6 +101,7 @@ import type {
   PaseoConfigRevision,
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
+  SidebarLayout,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -2707,6 +2708,36 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "Workspace recovery was rejected by the host");
     }
+  }
+
+  async getSidebarLayout(requestId?: string): Promise<SidebarLayout> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "sidebar.layout.get.request" },
+      responseType: "sidebar.layout.get.response",
+    });
+    return payload.layout;
+  }
+
+  // A rejected write is NOT an error here: it means another device edited the layout
+  // first. The caller gets `accepted: false` plus the authoritative document and
+  // re-applies its edit on top of it, so this deliberately does not throw the way the
+  // other setters do.
+  async setSidebarLayout(input: {
+    layout: SidebarLayout;
+    expectedRevision: number;
+    requestId?: string;
+  }): Promise<{ accepted: boolean; layout: SidebarLayout }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "sidebar.layout.set.request",
+        layout: input.layout,
+        expectedRevision: input.expectedRevision,
+      },
+      responseType: "sidebar.layout.set.response",
+    });
+    return { accepted: payload.accepted, layout: payload.layout };
   }
 
   async resumeAgent(

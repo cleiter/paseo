@@ -13,6 +13,7 @@ function emptyState(): CollapsedProjectsState {
   return {
     collapsedProjectKeys: new Set(),
     collapsedStatusGroupKeys: new Set(),
+    collapsedGroupKeys: new Set(),
     collapsedPinned: false,
   };
 }
@@ -34,12 +35,14 @@ describe("sidebar collapsed projects transitions", () => {
     const state: CollapsedProjectsState = {
       collapsedProjectKeys: new Set(["project-a", "project-b"]),
       collapsedStatusGroupKeys: new Set(["running"]),
+      collapsedGroupKeys: new Set(["grp_review"]),
       collapsedPinned: true,
     };
 
     expect(serializeCollapsedProjects(state)).toEqual({
       collapsedProjectKeys: ["project-a", "project-b"],
       collapsedStatusGroupKeys: ["running"],
+      collapsedGroupKeys: ["grp_review"],
       collapsedPinned: true,
     });
   });

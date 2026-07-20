@@ -143,6 +143,8 @@ import {
   FileBackedWorkspaceRegistry,
   type WorkspaceArchiveContext,
 } from "./workspace-registry.js";
+import { SidebarLayoutStore } from "./sidebar-layout-store.js";
+import { FileSidebarLayoutBackend } from "./sidebar-layout-file-backend.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
@@ -796,6 +798,17 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
+  // Owns only its own file. It must never touch projects.json/workspaces.json: their
+  // mere existence is the gate that decides whether bootstrapWorkspaceRegistries runs
+  // the one-time materialization, so creating one early would strand existing users
+  // with an empty sidebar.
+  const sidebarLayoutStore = new SidebarLayoutStore(
+    new FileSidebarLayoutBackend(
+      path.join(config.paseoHome, "projects", "sidebar-layout.json"),
+      logger,
+    ),
+    logger,
+  );
   const chatService = new FileBackedChatService({
     paseoHome: config.paseoHome,
     logger,
@@ -860,6 +873,7 @@ export async function createPaseoDaemon(
     scriptRuntimeStore.removeForWorkspace(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
   };
+  await sidebarLayoutStore.initialize();
   const workspaceReconciliation = new WorkspaceReconciliationService({
     serverId,
     projectRegistry,
@@ -1564,6 +1578,7 @@ export async function createPaseoDaemon(
               serviceProxyPublicBaseUrl,
               browserToolsBroker,
               hubRelationships,
+              sidebarLayoutStore,
             );
             relayRuntime = createRelayRuntime({
               config: {

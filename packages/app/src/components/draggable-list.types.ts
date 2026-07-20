@@ -64,4 +64,20 @@ export interface DraggableListProps<T> {
    * lists coordinated by a shared NestableScrollContainer.
    */
   nestable?: boolean;
+  /**
+   * WEB ONLY. When true the list does NOT mount its own DndContext and instead
+   * renders a bare SortableContext, expecting an ancestor to own the drag. This is
+   * what lets one drag span several lists (e.g. moving a workspace between groups);
+   * a per-list DndContext can't do that, because dnd-kit cannot drag across contexts.
+   * The ancestor then owns `activeId` and the drag handlers. Native ignores it.
+   */
+  externalDndContext?: boolean;
+  /**
+   * WEB ONLY. Attaches a typed payload to each draggable so the ancestor's drag
+   * handler can tell which list an item came from and which it was dropped on.
+   * Without it `event.active.data` is empty and a cross-list drop is unreadable.
+   */
+  getItemData?: (item: T, index: number) => Record<string, unknown>;
+  /** WEB ONLY. The dragging item's id when an ancestor owns the DndContext. */
+  activeId?: string | null;
 }

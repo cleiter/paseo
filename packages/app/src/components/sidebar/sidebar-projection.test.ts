@@ -66,6 +66,8 @@ function projectionInput(options?: {
       pinnedWorkspaceKeys: [pinned.placement.workspaceKey],
       pinnedAtByKey: { [pinned.placement.workspaceKey]: "2026-07-12T12:00:00.000Z" },
     },
+    // Nobody has dragged the Pinned section, so it falls back to pinnedAt order.
+    pinnedOrder: [],
     workspaceEntriesByKey: new Map([
       [pinned.entry.workspaceKey, pinned.entry],
       [unpinned.entry.workspaceKey, unpinned.entry],

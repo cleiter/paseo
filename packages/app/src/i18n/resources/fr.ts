@@ -957,6 +957,51 @@ export const fr: TranslationResources = {
     pinned: {
       title: "Épinglés",
     },
+    group: {
+      create: "Créer",
+      save: "Enregistrer",
+      cancel: "Annuler",
+      deleteConfirm: "Supprimer",
+    },
+    projectGroup: {
+      noGroup: "Projets sans groupe",
+      moveToGroup: "Déplacer vers un groupe de projets",
+      moveToNewGroup: "Nouveau groupe de projets...",
+      removeFromGroup: "Retirer du groupe de projets",
+      rename: "Renommer le groupe de projets",
+      delete: "Supprimer le groupe de projets",
+      newGroupTitle: "Nouveau groupe de projets",
+      newGroupPlaceholder: "Nom du groupe de projets",
+      renameGroupTitle: "Renommer le groupe de projets",
+      actions: {
+        menu: "Actions du groupe de projets",
+      },
+      confirmations: {
+        deleteTitle: "Supprimer le groupe de projets ?",
+        deleteMessage:
+          "Supprimer « {{groupName}} » ?\n\nAucun projet n\u2019est supprimé : ils reviennent dans Projets sans groupe.",
+      },
+    },
+    workspaceGroup: {
+      newGroup: "Nouveau groupe d’espaces de travail...",
+      noGroup: "Espaces de travail sans groupe",
+      moveToGroup: "Déplacer vers un groupe d\u2019espaces de travail",
+      moveToNewGroup: "Nouveau groupe d\u2019espaces de travail...",
+      removeFromGroup: "Retirer du groupe d\u2019espaces de travail",
+      rename: "Renommer le groupe d\u2019espaces de travail",
+      delete: "Supprimer le groupe d\u2019espaces de travail",
+      newGroupTitle: "Nouveau groupe d\u2019espaces de travail",
+      newGroupPlaceholder: "Nom du groupe d\u2019espaces de travail",
+      renameGroupTitle: "Renommer le groupe d\u2019espaces de travail",
+      actions: {
+        menu: "Actions du groupe d\u2019espaces de travail",
+      },
+      confirmations: {
+        deleteTitle: "Supprimer le groupe d\u2019espaces de travail ?",
+        deleteMessage:
+          "Supprimer « {{groupName}} » ?\n\nAucun espace de travail n\u2019est supprimé : ils reviennent dans Espaces de travail sans groupe.",
+      },
+    },
     host: {
       noHost: "Aucun hôte",
       switchTitle: "Changer d'hôte",

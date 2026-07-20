@@ -11,6 +11,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
+import { createInMemorySidebarLayoutBackend, SidebarLayoutStore } from "./sidebar-layout-store.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
@@ -509,6 +510,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly sidebarLayoutStore: SidebarLayoutStore;
+  private unsubscribeSidebarLayoutChange: (() => void) | null = null;
   private readonly chatService: FileBackedChatService;
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
@@ -604,6 +607,7 @@ export class VoiceAssistantWebSocketServer {
     serviceProxyPublicBaseUrl?: string | null,
     browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
+    sidebarLayoutStore?: SidebarLayoutStore,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
@@ -620,6 +624,9 @@ export class VoiceAssistantWebSocketServer {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
+    this.sidebarLayoutStore =
+      sidebarLayoutStore ??
+      new SidebarLayoutStore(createInMemorySidebarLayoutBackend(), this.logger);
     const requiredServices = requireWebSocketServices({
       chatService,
       loopService,
@@ -669,6 +676,17 @@ export class VoiceAssistantWebSocketServer {
       );
       this.agentManager.updateProviderRegistry(nextAgentManagerState);
       this.broadcastDaemonConfigChanged(config);
+    });
+    // A Session can only emit to its own socket, so the fan-out to every other device
+    // has to happen here: one device edits the layout, the store publishes, and every
+    // connected session — including relay-attached phones — sees it.
+    this.unsubscribeSidebarLayoutChange = this.sidebarLayoutStore.onChange((layout) => {
+      this.broadcast(
+        wrapSessionMessage({
+          type: "status",
+          payload: { status: "sidebar_layout_changed", layout },
+        }),
+      );
     });
 
     const pushLogger = this.logger.child({ module: "push" });
@@ -958,6 +976,8 @@ export class VoiceAssistantWebSocketServer {
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();
     this.unsubscribeDaemonConfigChange = null;
+    this.unsubscribeSidebarLayoutChange?.();
+    this.unsubscribeSidebarLayoutChange = null;
     this.unsubscribeTerminalActivity?.();
     this.unsubscribeTerminalActivity = null;
     if (this.runtimeMetricsInterval) {
@@ -1328,6 +1348,7 @@ export class VoiceAssistantWebSocketServer {
       agentStorage: this.agentStorage,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
+      sidebarLayoutStore: this.sidebarLayoutStore,
       chatService: this.chatService,
       loopService: this.loopService,
       scheduleService: this.scheduleService,
@@ -1602,6 +1623,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceScriptManagement: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: true,
+        // COMPAT(sidebarLayout): added in v0.1.108, remove gate after 2027-01-14.
+        sidebarLayout: true,
       },
     };
   }

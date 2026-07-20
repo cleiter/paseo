@@ -3,6 +3,7 @@ import type {
   ListTerminalsResponse,
   MutableDaemonConfig,
   SessionOutboundMessage,
+  SidebarLayout,
 } from "@getpaseo/protocol/messages";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
@@ -14,6 +15,7 @@ import {
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
 } from "@/data/providers-snapshot";
+import { sidebarLayoutQueryKey } from "@/data/sidebar-layout";
 
 type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
@@ -115,6 +117,14 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     domain: "daemonPairingOffer",
     invalidate: ({ queryClient, serverId }) => {
       void queryClient.invalidateQueries({ queryKey: daemonPairingOfferQueryKey(serverId) });
+    },
+  },
+  {
+    // Refetching on reconnect is what surfaces a host that fell behind while it was
+    // gone; useSidebarLayout then heals it from the winning document.
+    domain: "sidebarLayout",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: sidebarLayoutQueryKey(serverId) });
     },
   },
   {
@@ -292,6 +302,9 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
   const unsubscribeDaemonConfig = input.client.on("status", (message) => {
     applyDaemonConfigStatus({ queryClient: input.queryClient, serverId: input.serverId, message });
   });
+  const unsubscribeSidebarLayout = input.client.on("status", (message) => {
+    applySidebarLayoutStatus({ queryClient: input.queryClient, serverId: input.serverId, message });
+  });
   const unsubscribeCheckoutDiffUpdate = input.client.on("checkout_diff_update", (message) => {
     applyCheckoutDiffUpdate({
       activeCheckoutDiffSubscriptions,
@@ -338,6 +351,7 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     unsubscribeQueryCache();
     unsubscribeProviders();
     unsubscribeDaemonConfig();
+    unsubscribeSidebarLayout();
     unsubscribeCheckoutDiffUpdate();
     unsubscribeCheckoutDiffResponse();
     unsubscribeTerminalsChanged();
@@ -429,6 +443,24 @@ function applyDaemonConfigStatus(input: {
   void input.queryClient.invalidateQueries({
     queryKey: daemonPairingOfferQueryKey(input.serverId),
   });
+}
+
+// The daemon broadcasts this to every connected session, so a group made on the desktop
+// lands on the phone without it asking. This is what "the same sidebar on any device"
+// actually reduces to.
+function applySidebarLayoutStatus(input: {
+  queryClient: QueryClient;
+  serverId: string;
+  message: StatusMessage;
+}): void {
+  const payload = input.message.payload;
+  if (!isSidebarLayoutChangedPayload(payload)) {
+    return;
+  }
+  input.queryClient.setQueryData<SidebarLayout>(
+    sidebarLayoutQueryKey(input.serverId),
+    payload.layout,
+  );
 }
 
 function applyCheckoutDiffUpdate(input: {
@@ -783,4 +815,10 @@ function isDaemonConfigChangedPayload(
   payload: StatusMessage["payload"],
 ): payload is { status: "daemon_config_changed"; config: MutableDaemonConfig } {
   return payload.status === "daemon_config_changed" && isRecord(payload.config);
+}
+
+function isSidebarLayoutChangedPayload(
+  payload: StatusMessage["payload"],
+): payload is { status: "sidebar_layout_changed"; layout: SidebarLayout } {
+  return payload.status === "sidebar_layout_changed" && isRecord(payload.layout);
 }

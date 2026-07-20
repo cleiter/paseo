@@ -937,6 +937,54 @@ export const en = {
     pinned: {
       title: "Pinned",
     },
+    // Two kinds of group, named apart everywhere the user can see them. They sit at
+    // different levels of the same tree and a bare "group" leaves you guessing which one
+    // a menu item is about. Only the neutral verbs are shared.
+    group: {
+      create: "Create",
+      save: "Save",
+      cancel: "Cancel",
+      deleteConfirm: "Delete",
+    },
+    projectGroup: {
+      noGroup: "Ungrouped projects",
+      moveToGroup: "Move to project group",
+      moveToNewGroup: "New project group...",
+      removeFromGroup: "Remove from project group",
+      rename: "Rename project group",
+      delete: "Delete project group",
+      newGroupTitle: "New project group",
+      newGroupPlaceholder: "Project group name",
+      renameGroupTitle: "Rename project group",
+      actions: {
+        menu: "Project group actions",
+      },
+      confirmations: {
+        deleteTitle: "Delete project group?",
+        deleteMessage:
+          'Delete "{{groupName}}"?\n\nNo projects are removed — they move back to Ungrouped projects.',
+      },
+    },
+    workspaceGroup: {
+      noGroup: "Ungrouped workspaces",
+      newGroup: "New workspace group...",
+      moveToGroup: "Move to workspace group",
+      moveToNewGroup: "New workspace group...",
+      removeFromGroup: "Remove from workspace group",
+      rename: "Rename workspace group",
+      delete: "Delete workspace group",
+      newGroupTitle: "New workspace group",
+      newGroupPlaceholder: "Workspace group name",
+      renameGroupTitle: "Rename workspace group",
+      actions: {
+        menu: "Workspace group actions",
+      },
+      confirmations: {
+        deleteTitle: "Delete workspace group?",
+        deleteMessage:
+          'Delete "{{groupName}}"?\n\nNo workspaces are removed — they move back to Ungrouped workspaces.',
+      },
+    },
     host: {
       noHost: "No host",
       switchTitle: "Switch host",

@@ -29,6 +29,7 @@ import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
 import {
+  createEphemeralSidebarLayoutStore,
   asSessionInternals as asSessionInternalsHelper,
   asAgentManager,
   asAgentStorage,
@@ -355,6 +356,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   const messages = options.messages ?? [];
 
   const sessionOptions: SessionOptions = {
+    sidebarLayoutStore: createEphemeralSidebarLayoutStore(),
     clientId: "test-client",
     onMessage: (message) => messages.push(message),
     ...(options.targetedMessages

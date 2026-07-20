@@ -15,6 +15,7 @@ import type {
 } from "../agent/provider-snapshot-manager.js";
 import { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "../session.js";
+import { createInMemorySidebarLayoutBackend, SidebarLayoutStore } from "../sidebar-layout-store.js";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { asInternals, createStub } from "./class-mocks.js";
 
@@ -28,6 +29,16 @@ export function asSessionLogger(stub: {
   [K in keyof SessionOptions["logger"]]?: unknown;
 }): SessionOptions["logger"] {
   return createStub<SessionOptions["logger"]>(stub);
+}
+
+// The real store, pointed at no file. It is not a mock: it keeps a layout in memory
+// and runs the actual revision/conflict logic, it just never touches disk. Tests that
+// do not care about the sidebar layout still get correct behavior from it.
+export function createEphemeralSidebarLayoutStore(): SessionOptions["sidebarLayoutStore"] {
+  return new SidebarLayoutStore(
+    createInMemorySidebarLayoutBackend(),
+    asSessionLogger({ error: vi.fn(), info: vi.fn() }),
+  );
 }
 
 export function asAgentManager(stub: {

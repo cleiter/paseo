@@ -1,5 +1,11 @@
 import { useMemo } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
+import { useSidebarLayout } from "@/hooks/use-sidebar-layout";
+import {
+  deriveProjectOrder,
+  deriveWorkspaceOrderByProject,
+  isLayoutOrderAuthoritative,
+} from "@/sidebar/sidebar-layout-order";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import {
   composeWorkspaceStructure,
@@ -96,15 +102,32 @@ export function useWorkspaceStructure(serverIds: string[]): WorkspaceStructure {
     (state) => selectWorkspaceStructureProjects(state, serverIds),
     workspaceEqualityFns.deep,
   );
-  const projectOrder = useStoreWithEqualityFn(
+  const localProjectOrder = useStoreWithEqualityFn(
     useSidebarOrderStore,
     (state) => selectProjectOrder(state),
     workspaceEqualityFns.deep,
   );
-  const workspaceOrderByScope = useStoreWithEqualityFn(
+  const localWorkspaceOrderByScope = useStoreWithEqualityFn(
     useSidebarOrderStore,
     (state) => selectWorkspaceOrderByScope(state),
     workspaceEqualityFns.deep,
+  );
+
+  // Where the sidebar's order comes from, decided in exactly one place. Once any device
+  // has written a layout the synced document owns the order; until then — which is also
+  // what an old daemon looks like, since it can never reach revision 1 — it stays the
+  // per-device order the sidebar has always used. Nothing downstream knows the
+  // difference; it receives one ordered list either way.
+  const { layout } = useSidebarLayout();
+  const authoritative = isLayoutOrderAuthoritative(layout);
+
+  const projectOrder = useMemo(
+    () => (authoritative ? deriveProjectOrder(layout) : localProjectOrder),
+    [authoritative, layout, localProjectOrder],
+  );
+  const workspaceOrderByScope = useMemo(
+    () => (authoritative ? deriveWorkspaceOrderByProject(layout) : localWorkspaceOrderByScope),
+    [authoritative, layout, localWorkspaceOrderByScope],
   );
 
   return useMemo(

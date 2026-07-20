@@ -938,6 +938,51 @@ export const ja: TranslationResources = {
     pinned: {
       title: "固定済み",
     },
+    group: {
+      create: "作成",
+      save: "保存",
+      cancel: "キャンセル",
+      deleteConfirm: "削除",
+    },
+    projectGroup: {
+      noGroup: "グループなしのプロジェクト",
+      moveToGroup: "プロジェクトグループへ移動",
+      moveToNewGroup: "新しいプロジェクトグループ...",
+      removeFromGroup: "プロジェクトグループから外す",
+      rename: "プロジェクトグループ名を変更",
+      delete: "プロジェクトグループを削除",
+      newGroupTitle: "新しいプロジェクトグループ",
+      newGroupPlaceholder: "プロジェクトグループ名",
+      renameGroupTitle: "プロジェクトグループ名を変更",
+      actions: {
+        menu: "プロジェクトグループの操作",
+      },
+      confirmations: {
+        deleteTitle: "プロジェクトグループを削除しますか？",
+        deleteMessage:
+          '"{{groupName}}" を削除しますか？\n\nプロジェクトは削除されず、「グループなしのプロジェクト」に戻ります。',
+      },
+    },
+    workspaceGroup: {
+      newGroup: "新しいワークスペースグループ...",
+      noGroup: "グループなしのワークスペース",
+      moveToGroup: "ワークスペースグループへ移動",
+      moveToNewGroup: "新しいワークスペースグループ...",
+      removeFromGroup: "ワークスペースグループから外す",
+      rename: "ワークスペースグループ名を変更",
+      delete: "ワークスペースグループを削除",
+      newGroupTitle: "新しいワークスペースグループ",
+      newGroupPlaceholder: "ワークスペースグループ名",
+      renameGroupTitle: "ワークスペースグループ名を変更",
+      actions: {
+        menu: "ワークスペースグループの操作",
+      },
+      confirmations: {
+        deleteTitle: "ワークスペースグループを削除しますか？",
+        deleteMessage:
+          '"{{groupName}}" を削除しますか？\n\nワークスペースは削除されず、「グループなしのワークスペース」に戻ります。',
+      },
+    },
     host: {
       noHost: "ホストなし",
       switchTitle: "ホストを切り替え",

@@ -7,6 +7,7 @@ import {
 import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { usePinnedSidebarKeys, type PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
+import { useSidebarLayout } from "@/hooks/use-sidebar-layout";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
@@ -24,6 +25,8 @@ interface SidebarModel extends SidebarWorkspacesListResult {
 
 const SidebarModelContext = createContext<SidebarModel | null>(null);
 const EMPTY_WORKSPACE_ENTRIES = new Map<string, SidebarWorkspaceEntry>();
+// A stable identity: `?? []` inline would hand the projection a fresh array every render.
+const EMPTY_PINNED_ORDER: readonly string[] = [];
 
 export function SidebarModelProvider({
   active,
@@ -53,11 +56,14 @@ export function SidebarModelProvider({
     ? workspaceEntriesByKey
     : EMPTY_WORKSPACE_ENTRIES;
   const pinnedKeys = usePinnedSidebarKeys(list.projects);
+  const { layout } = useSidebarLayout();
+  const pinnedOrder = layout.pinnedWorkspaceKeys ?? EMPTY_PINNED_ORDER;
   const projection = useMemo(
     () =>
       buildSidebarProjection({
         projects: list.projects,
         pinnedKeys,
+        pinnedOrder,
         workspaceEntriesByKey: projectionWorkspaceEntriesByKey,
         projectNamesByViewKey: list.projectNamesByViewKey,
         groupMode,
@@ -73,6 +79,7 @@ export function SidebarModelProvider({
       list.projects,
       pinnedCollapsed,
       pinnedKeys,
+      pinnedOrder,
       projectionWorkspaceEntriesByKey,
     ],
   );

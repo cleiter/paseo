@@ -24,6 +24,8 @@ export interface SidebarProjection {
 export function buildSidebarProjection(input: {
   projects: SidebarProjectEntry[];
   pinnedKeys: PinnedSidebarKeys;
+  // The Pinned section's order, from the layout document. Empty until someone drags one.
+  pinnedOrder: readonly string[];
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectNamesByViewKey: Map<string, string>;
   groupMode: SidebarGroupMode;
@@ -34,6 +36,7 @@ export function buildSidebarProjection(input: {
   const pinnedGroups = splitPinnedSidebarGroups({
     projects: input.projects,
     keys: input.pinnedKeys,
+    pinnedOrder: input.pinnedOrder,
   });
   const pinnedWorkspaceKeys = new Set(input.pinnedKeys.pinnedWorkspaceKeys);
   const statusGroups =

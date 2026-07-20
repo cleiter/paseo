@@ -66,7 +66,7 @@ describe("splitPinnedSidebarGroups", () => {
     expect(result.unpinnedProjects[0]?.workspaces.map((w) => w.workspaceKey)).toEqual(["w2"]);
   });
 
-  it("orders pinned chats by most-recently-pinned first", () => {
+  it("orders pinned chats by most-recently-pinned first when nobody has arranged them", () => {
     const projects = [project("p1", [placement("older"), placement("newer")])];
     const result = splitPinnedSidebarGroups({
       projects,
@@ -82,6 +82,53 @@ describe("splitPinnedSidebarGroups", () => {
     expect(result.pinnedChats.map((workspace) => workspace.workspaceKey)).toEqual([
       "newer",
       "older",
+    ]);
+  });
+
+  it("follows the arranged order instead of pinned-at once one exists", () => {
+    const projects = [project("p1", [placement("older"), placement("newer")])];
+    const result = splitPinnedSidebarGroups({
+      projects,
+      keys: {
+        pinnedWorkspaceKeys: ["older", "newer"],
+        pinnedAtByKey: {
+          older: "2026-01-01T00:00:00Z",
+          newer: "2026-02-01T00:00:00Z",
+        },
+      },
+      // The user dragged the older pin back to the top. Recency must not undo that.
+      pinnedOrder: ["older", "newer"],
+    });
+
+    expect(result.pinnedChats.map((workspace) => workspace.workspaceKey)).toEqual([
+      "older",
+      "newer",
+    ]);
+  });
+
+  it("floats a pin the arranged order has never seen to the top, newest first", () => {
+    // Pinned just now, or pinned on a device that never wrote an order. Sorting it to the
+    // bottom of a list arranged months ago would hide the thing the user just asked for.
+    const projects = [
+      project("p1", [placement("arranged"), placement("fresh"), placement("fresher")]),
+    ];
+    const result = splitPinnedSidebarGroups({
+      projects,
+      keys: {
+        pinnedWorkspaceKeys: ["arranged", "fresh", "fresher"],
+        pinnedAtByKey: {
+          arranged: "2026-01-01T00:00:00Z",
+          fresh: "2026-02-01T00:00:00Z",
+          fresher: "2026-03-01T00:00:00Z",
+        },
+      },
+      pinnedOrder: ["arranged"],
+    });
+
+    expect(result.pinnedChats.map((workspace) => workspace.workspaceKey)).toEqual([
+      "fresher",
+      "fresh",
+      "arranged",
     ]);
   });
 });

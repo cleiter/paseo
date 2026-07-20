@@ -934,6 +934,51 @@ export const ko: TranslationResources = {
     pinned: {
       title: "고정됨",
     },
+    group: {
+      create: "생성",
+      save: "저장",
+      cancel: "취소",
+      deleteConfirm: "삭제",
+    },
+    projectGroup: {
+      noGroup: "그룹 없는 프로젝트",
+      moveToGroup: "프로젝트 그룹으로 이동",
+      moveToNewGroup: "새 프로젝트 그룹...",
+      removeFromGroup: "프로젝트 그룹에서 제거",
+      rename: "프로젝트 그룹 이름 변경",
+      delete: "프로젝트 그룹 삭제",
+      newGroupTitle: "새 프로젝트 그룹",
+      newGroupPlaceholder: "프로젝트 그룹 이름",
+      renameGroupTitle: "프로젝트 그룹 이름 변경",
+      actions: {
+        menu: "프로젝트 그룹 작업",
+      },
+      confirmations: {
+        deleteTitle: "프로젝트 그룹을 삭제할까요?",
+        deleteMessage:
+          '"{{groupName}}"을(를) 삭제할까요?\n\n프로젝트는 삭제되지 않고 "그룹 없는 프로젝트"로 돌아갑니다.',
+      },
+    },
+    workspaceGroup: {
+      newGroup: "새 워크스페이스 그룹...",
+      noGroup: "그룹 없는 워크스페이스",
+      moveToGroup: "워크스페이스 그룹으로 이동",
+      moveToNewGroup: "새 워크스페이스 그룹...",
+      removeFromGroup: "워크스페이스 그룹에서 제거",
+      rename: "워크스페이스 그룹 이름 변경",
+      delete: "워크스페이스 그룹 삭제",
+      newGroupTitle: "새 워크스페이스 그룹",
+      newGroupPlaceholder: "워크스페이스 그룹 이름",
+      renameGroupTitle: "워크스페이스 그룹 이름 변경",
+      actions: {
+        menu: "워크스페이스 그룹 작업",
+      },
+      confirmations: {
+        deleteTitle: "워크스페이스 그룹을 삭제할까요?",
+        deleteMessage:
+          '"{{groupName}}"을(를) 삭제할까요?\n\n워크스페이스는 삭제되지 않고 "그룹 없는 워크스페이스"로 돌아갑니다.',
+      },
+    },
     host: {
       noHost: "호스트 없음",
       switchTitle: "호스트 전환",

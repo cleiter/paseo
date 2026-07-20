@@ -97,10 +97,20 @@ export function usePinnedSidebarKeys(projects: SidebarProjectEntry[]): PinnedSid
 }
 
 // Splits the sidebar into a dedicated Pinned section (chats) and the regular list below.
-// Pinned chats are ordered most-recently-pinned first.
+//
+// The Pinned section carries its OWN order, from the layout document, which is why it is
+// passed in: a pinned workspace is hoisted out of its project here, but it keeps its place
+// inside its group in the document — that is what unpinning restores it to. The two orders
+// coexist on purpose.
+//
+// A pin the order has never seen — just pinned, or pinned on a device that never wrote an
+// order — sorts to the TOP by pinnedAt, which is exactly what this section did before it had
+// an order at all. So with an empty order (no daemon storing a layout, or nobody has
+// reordered yet) the behaviour is unchanged, and the first drag anchors everything.
 export function splitPinnedSidebarGroups(input: {
   projects: SidebarProjectEntry[];
   keys: PinnedSidebarKeys;
+  pinnedOrder?: readonly string[];
 }): PinnedSidebarGroups {
   const { projects, keys } = input;
   if (keys.pinnedWorkspaceKeys.length === 0) {
@@ -132,11 +142,23 @@ export function splitPinnedSidebarGroups(input: {
     );
   }
 
-  pinnedChats.sort((a, b) =>
-    (keys.pinnedAtByKey[b.workspaceKey] ?? "").localeCompare(
-      keys.pinnedAtByKey[a.workspaceKey] ?? "",
-    ),
-  );
+  const slotByKey = new Map((input.pinnedOrder ?? []).map((key, index) => [key, index]));
+  pinnedChats.sort((a, b) => {
+    const left = slotByKey.get(a.workspaceKey);
+    const right = slotByKey.get(b.workspaceKey);
+    if (left !== undefined && right !== undefined) {
+      return left - right;
+    }
+    // Neither has been ordered: newest pin first, the section's original behaviour.
+    if (left === undefined && right === undefined) {
+      return (keys.pinnedAtByKey[b.workspaceKey] ?? "").localeCompare(
+        keys.pinnedAtByKey[a.workspaceKey] ?? "",
+      );
+    }
+    // An unordered pin outranks an ordered one, so a fresh pin surfaces at the top instead
+    // of hiding at the bottom of a list the user arranged months ago.
+    return left === undefined ? -1 : 1;
+  });
 
   return { pinnedChats, unpinnedProjects };
 }

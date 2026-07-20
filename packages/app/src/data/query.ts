@@ -57,6 +57,18 @@ export function useFetchQueries<TData>(
   return useQueries({ queries: inputs.map((input) => fetchQueryOptions(input)) });
 }
 
+// The same replica policy, for a replica that lives on EVERY host at once rather than
+// one. The sidebar layout is the case this exists for: it is a single user-level
+// document copied to each daemon, so reading it means one query per connected host and
+// picking a winner, which a single useReplicaQuery cannot express.
+export function useReplicaQueries<TQueryFnData, TError = Error>(
+  inputs: readonly ReplicaQueryInput<TQueryFnData, TError, TQueryFnData, QueryKey>[],
+): UseQueryResult<TQueryFnData, TError>[] {
+  return useQueries({
+    queries: inputs.map((input) => replicaQueryOptions(input)),
+  }) as UseQueryResult<TQueryFnData, TError>[];
+}
+
 function replicaQueryOptions<
   TQueryFnData,
   TError = Error,

@@ -949,6 +949,51 @@ export const ptBR: TranslationResources = {
     pinned: {
       title: "Fixados",
     },
+    group: {
+      create: "Criar",
+      save: "Salvar",
+      cancel: "Cancelar",
+      deleteConfirm: "Excluir",
+    },
+    projectGroup: {
+      noGroup: "Projetos sem grupo",
+      moveToGroup: "Mover para grupo de projetos",
+      moveToNewGroup: "Novo grupo de projetos...",
+      removeFromGroup: "Remover do grupo de projetos",
+      rename: "Renomear grupo de projetos",
+      delete: "Excluir grupo de projetos",
+      newGroupTitle: "Novo grupo de projetos",
+      newGroupPlaceholder: "Nome do grupo de projetos",
+      renameGroupTitle: "Renomear grupo de projetos",
+      actions: {
+        menu: "Ações do grupo de projetos",
+      },
+      confirmations: {
+        deleteTitle: "Excluir o grupo de projetos?",
+        deleteMessage:
+          'Excluir "{{groupName}}"?\n\nNenhum projeto é removido: eles voltam para Projetos sem grupo.',
+      },
+    },
+    workspaceGroup: {
+      newGroup: "Novo grupo de workspaces...",
+      noGroup: "Workspaces sem grupo",
+      moveToGroup: "Mover para grupo de workspaces",
+      moveToNewGroup: "Novo grupo de workspaces...",
+      removeFromGroup: "Remover do grupo de workspaces",
+      rename: "Renomear grupo de workspaces",
+      delete: "Excluir grupo de workspaces",
+      newGroupTitle: "Novo grupo de workspaces",
+      newGroupPlaceholder: "Nome do grupo de workspaces",
+      renameGroupTitle: "Renomear grupo de workspaces",
+      actions: {
+        menu: "Ações do grupo de workspaces",
+      },
+      confirmations: {
+        deleteTitle: "Excluir o grupo de workspaces?",
+        deleteMessage:
+          'Excluir "{{groupName}}"?\n\nNenhum workspace é removido: eles voltam para Workspaces sem grupo.',
+      },
+    },
     host: {
       noHost: "Nenhum host",
       switchTitle: "Trocar host",
