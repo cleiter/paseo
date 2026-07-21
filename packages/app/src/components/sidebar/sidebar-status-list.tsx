@@ -479,17 +479,6 @@ function StatusWorkspaceRowWithMenu({
     },
   });
 
-  useKeyboardActionHandler({
-    handlerId: `workspace-pin-${workspace.workspaceKey}`,
-    actions: ["workspace.pin"],
-    enabled: selected && canPin,
-    priority: 0,
-    handle: () => {
-      onTogglePin?.();
-      return true;
-    },
-  });
-
   return (
     <>
       <StatusWorkspaceRowInner
