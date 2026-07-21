@@ -106,9 +106,9 @@ Paseo sets these when it forwards a request to a workspace service:
 | `X-Forwarded-Host`  | The `Host` header verbatim, including the port when the client used one                                                                 |
 | `X-Forwarded-Proto` | The request scheme (`http` on the WebSocket upgrade path)                                                                               |
 | `X-Forwarded-For`   | The immediate peer address. Replaces any existing chain, so behind your own reverse proxy this is the proxy's address, not the client's |
-| `X-Forwarded-Port`  | The port from the `Host` header, only when it has one and no upstream proxy already set a port                                          |
+| `X-Forwarded-Port`  | The port from the `Host` header when it has one, otherwise whatever your proxy already set                                              |
 
-`X-Forwarded-Port` follows a never-invent, never-clobber rule: Paseo only reports a port it observed in the `Host` header, never derives one from the scheme, and never overwrites a value your reverse proxy set. Any other `X-Forwarded-*` header your proxy sends is passed through untouched.
+`X-Forwarded-Port` follows the same trust rule as `X-Forwarded-Host`: the authority Paseo observed wins. When the `Host` header carries a port, that port is reported and replaces any inbound `X-Forwarded-Port`, so a client cannot forge one. When `Host` carries no port there is nothing to observe, so a value your reverse proxy set survives untouched — that is the case where nginx's `$host` drops the port and `X-Forwarded-Port` is the only source. Paseo never derives the port from the scheme. Any other `X-Forwarded-*` header your proxy sends is passed through untouched.
 
 Services that build absolute URLs should prefer `Host` or `X-Forwarded-Host`. Treat the port in either as client-supplied: route lookup ignores it, so a client can send any value.
 

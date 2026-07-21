@@ -468,6 +468,22 @@ describe("service proxy forwarded headers", () => {
     }
   });
 
+  it("overrides a client-supplied forwarded port with the observed authority port", async () => {
+    const fixture = await startForwardedHeadersFixture();
+    try {
+      const response = await httpGet(
+        fixture.daemonPort,
+        `${fixture.hostname}:${fixture.daemonPort}`,
+        { path: "/", headers: { "x-forwarded-port": "443" } },
+      );
+      const headers = JSON.parse(response.body) as Record<string, string | undefined>;
+
+      expect(headers["x-forwarded-port"]).toBe(String(fixture.daemonPort));
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("reports the real port when a client sends an empty forwarded port", async () => {
     const fixture = await startForwardedHeadersFixture();
     try {

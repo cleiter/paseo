@@ -289,15 +289,21 @@ function buildForwardedHeaders({
   // must treat the forwarded authority as untrusted input.
   forwardedHeaders["x-forwarded-host"] = hostHeader;
   forwardedHeaders["x-forwarded-proto"] = protocol;
-  // Never invent, never clobber: only report a port we observed first-hand in
-  // the Host header, and leave whatever an upstream proxy already set alone.
-  // Deriving it from the protocol would rewrite nginx's port when it terminates
-  // on a non-default listener, and the upgrade path's hardcoded "http" would
-  // turn a correct 443 into 80. An empty inbound value carries no port, so it
-  // does not count as something to preserve — treating it as one would let a
-  // client suppress the header and reintroduce the portless-origin bug.
+  // First-hand observation wins; an inbound value is a fallback, never an
+  // override. The authority we just parsed is the port the client really
+  // connected on, so it replaces any x-forwarded-port already on the request —
+  // the same trust rule x-forwarded-host follows above. Deferring to the
+  // inbound value would let a direct client send Host: svc.localhost:63735 with
+  // a forged x-forwarded-port: 443 and have services build URLs for 443, since
+  // frameworks apply x-forwarded-port after x-forwarded-host.
+  //
+  // When the Host carries no port there is nothing to observe, so whatever an
+  // upstream proxy set survives untouched: that is the nginx-on-:8443 case,
+  // where $host drops the port and x-forwarded-port is the only source. Never
+  // derive the port from the scheme — the upgrade path hardcodes "http", so
+  // defaulting would turn a correct 443 into 80.
   const port = parseHostHeaderPort(hostHeader);
-  if (port !== null && !forwardedHeaders["x-forwarded-port"]) {
+  if (port !== null) {
     forwardedHeaders["x-forwarded-port"] = port;
   }
   return forwardedHeaders;
