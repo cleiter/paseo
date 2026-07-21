@@ -289,19 +289,25 @@ function buildForwardedHeaders({
   // must treat the forwarded authority as untrusted input.
   forwardedHeaders["x-forwarded-host"] = hostHeader;
   forwardedHeaders["x-forwarded-proto"] = protocol;
-  // First-hand observation wins; an inbound value is a fallback, never an
-  // override. The authority we just parsed is the port the client really
-  // connected on, so it replaces any x-forwarded-port already on the request —
-  // the same trust rule x-forwarded-host follows above. Deferring to the
-  // inbound value would let a direct client send Host: svc.localhost:63735 with
-  // a forged x-forwarded-port: 443 and have services build URLs for 443, since
-  // frameworks apply x-forwarded-port after x-forwarded-host.
+  // Keep the two headers consistent: x-forwarded-host is set from Host just
+  // above, and frameworks apply x-forwarded-port afterwards, so an inbound port
+  // that disagrees would silently win over the authority we forwarded. The port
+  // in Host therefore takes precedence. When Host carries no port there is
+  // nothing to derive from and an upstream proxy's value survives — the
+  // nginx-on-:8443 case, where $host drops the port and x-forwarded-port is the
+  // only source. Never derive the port from the scheme: the upgrade path
+  // hardcodes "http", so defaulting would turn a correct 443 into 80.
   //
-  // When the Host carries no port there is nothing to observe, so whatever an
-  // upstream proxy set survives untouched: that is the nginx-on-:8443 case,
-  // where $host drops the port and x-forwarded-port is the only source. Never
-  // derive the port from the scheme — the upgrade path hardcodes "http", so
-  // defaulting would turn a correct 443 into 80.
+  // LIMITATION: none of this is authenticated, and the port in Host is not an
+  // observation of the connection — it is whatever the client wrote, since
+  // route lookup normalizes the port away before matching. Paseo also does not
+  // check whether an inbound x-forwarded-port arrived from a configured trusted
+  // proxy. Services must treat the forwarded authority as client-influenced
+  // input, not as a trusted origin. This predates the header handling here:
+  // Host has always carried a client-chosen port, and an inbound
+  // x-forwarded-port has always passed straight through. Closing it means
+  // threading the daemon's trustedProxies into this subsystem and into the
+  // upgrade path, which has no Express trust context. Tracked separately.
   const port = parseHostHeaderPort(hostHeader);
   if (port !== null) {
     forwardedHeaders["x-forwarded-port"] = port;
