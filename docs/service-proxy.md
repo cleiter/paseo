@@ -95,6 +95,23 @@ server {
 }
 ```
 
+Nginx's `$host` drops the port. If you terminate on a non-default port, use `$http_host` instead so the port survives — that is what "forwards the `Host` header unchanged" means here.
+
+## Forwarded headers
+
+Paseo sets these when it forwards a request to a workspace service:
+
+| Header              | Value                                                                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `X-Forwarded-Host`  | The `Host` header verbatim, including the port when the client used one                                                                 |
+| `X-Forwarded-Proto` | The request scheme (`http` on the WebSocket upgrade path)                                                                               |
+| `X-Forwarded-For`   | The immediate peer address. Replaces any existing chain, so behind your own reverse proxy this is the proxy's address, not the client's |
+| `X-Forwarded-Port`  | The port from the `Host` header, only when it has one and no upstream proxy already set a port                                          |
+
+`X-Forwarded-Port` follows a never-invent, never-clobber rule: Paseo only reports a port it observed in the `Host` header, never derives one from the scheme, and never overwrites a value your reverse proxy set. Any other `X-Forwarded-*` header your proxy sends is passed through untouched.
+
+Services that build absolute URLs should prefer `Host` or `X-Forwarded-Host`. Treat the port in either as client-supplied: route lookup ignores it, so a client can send any value.
+
 ## Environment variables
 
 The listen address and public base URL can also be set via environment variables, which take precedence over `config.json`:
