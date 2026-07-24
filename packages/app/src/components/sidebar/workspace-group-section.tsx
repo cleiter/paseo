@@ -5,6 +5,8 @@ import { StyleSheet } from "react-native-unistyles";
 import type { MutableRefObject } from "react";
 import type { GestureType } from "react-native-gesture-handler";
 import { GroupSectionHeader } from "@/components/sidebar/group-section-header";
+import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
+import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import { TREE_INDENT_PER_LEVEL } from "@/components/tree-primitives";
 import type { SidebarWorkspacePlacement } from "@/hooks/sidebar-workspaces-view-model";
@@ -63,6 +65,18 @@ export function WorkspaceGroupSection({
   const { t } = useTranslation();
   const dragActiveId = useSidebarGroupDragActiveId();
   const isRowDragging = useIsSidebarGroupItemDragging();
+
+  // A long group renders its first window of rows and hides the rest behind "show more",
+  // the same cap every other sidebar list uses. Drag reorders only the visible rows, and
+  // the reorder write folds them back into the group's stored order (mergeWithinSlots), so
+  // the rows past the cap keep their place — rearranging what is on screen never ejects the
+  // tail into "Ungrouped".
+  const {
+    visibleItems: visibleWorkspaces,
+    expanded,
+    canToggle,
+    toggleExpanded,
+  } = useLimitedSidebarGroup(workspaces);
 
   // Tag every row with the group it currently lives in. Without this the shared drag
   // context can't tell which group a row came from or was dropped on, and a
@@ -132,7 +146,7 @@ export function WorkspaceGroupSection({
     <View style={styles.railed}>
       <DraggableList
         testID={`${testID}-list`}
-        data={workspaces}
+        data={visibleWorkspaces}
         keyExtractor={keyExtractor}
         renderItem={renderWorkspace}
         onDragEnd={handleDragEnd}
@@ -145,6 +159,13 @@ export function WorkspaceGroupSection({
         getItemData={SIDEBAR_GROUP_DRAG_ENABLED ? getItemData : undefined}
         activeId={dragActiveId}
       />
+      {canToggle ? (
+        <SidebarGroupToggleRow
+          expanded={expanded}
+          onPress={toggleExpanded}
+          testID={`${testID}-show-more`}
+        />
+      ) : null}
     </View>
   );
 

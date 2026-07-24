@@ -5,6 +5,8 @@ import type { GestureType } from "react-native-gesture-handler";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { GroupSectionHeader } from "@/components/sidebar/group-section-header";
+import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
+import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import { TREE_INDENT_PER_LEVEL } from "@/components/tree-primitives";
 import type { GroupedSidebarProject } from "@/hooks/use-sidebar-groups";
@@ -51,6 +53,16 @@ export function UngroupedProjectSection({
   const dragActiveId = useSidebarGroupDragActiveId();
   const isItemDragging = useIsSidebarGroupItemDragging();
 
+  // Cap the ungrouped remainder at the shared row limit with a "show more" toggle, so a long
+  // tail of ungrouped projects does not render all at once. Drag reorders the visible rows
+  // and the write folds them back into the stored order, keeping the hidden tail in place.
+  const {
+    visibleItems: visibleProjects,
+    expanded,
+    canToggle,
+    toggleExpanded,
+  } = useLimitedSidebarGroup(projects);
+
   const collapsed = useSidebarCollapsedSectionsStore((state) =>
     state.collapsedGroupKeys.has(UNGROUPED_PROJECTS_COLLAPSE_KEY),
   );
@@ -91,7 +103,7 @@ export function UngroupedProjectSection({
       <View style={showHeader ? styles.railed : undefined}>
         <DraggableList
           testID="sidebar-project-list"
-          data={projects}
+          data={visibleProjects}
           keyExtractor={keyExtractor}
           renderItem={renderProject}
           onDragEnd={onDragEnd}
@@ -104,6 +116,13 @@ export function UngroupedProjectSection({
           getItemData={SIDEBAR_GROUP_DRAG_ENABLED ? getItemData : undefined}
           activeId={dragActiveId}
         />
+        {canToggle ? (
+          <SidebarGroupToggleRow
+            expanded={expanded}
+            onPress={toggleExpanded}
+            testID="sidebar-project-no-group-show-more"
+          />
+        ) : null}
       </View>
     );
 

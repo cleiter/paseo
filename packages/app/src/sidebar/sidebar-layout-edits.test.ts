@@ -11,6 +11,8 @@ import {
   moveWorkspaceToGroup,
   renameProjectGroup,
   reorderProjectGroups,
+  reorderProjectsInGroup,
+  reorderWorkspacesInGroup,
   setPinnedWorkspaceOrder,
   setWorkspaceKeysInGroup,
 } from "./sidebar-layout-edits";
@@ -374,5 +376,83 @@ describe("pinned workspace order", () => {
     const next = setPinnedWorkspaceOrder(before, { orderedVisibleKeys: ["a", "fresh", "b"] });
 
     expect(next.pinnedWorkspaceKeys).toEqual(["a", "fresh", "b"]);
+  });
+
+  it("reorders a workspace group from its full visible list, unchanged from a wholesale write", () => {
+    const before = layout({
+      workspaceGroups: [
+        { id: "g1", name: "In review", projectKey: "p", workspaceKeys: ["a", "b", "c"] },
+      ],
+    });
+
+    const next = reorderWorkspacesInGroup(before, {
+      projectKey: "p",
+      groupId: "g1",
+      orderedVisibleKeys: ["c", "a", "b"],
+    });
+
+    expect(next.workspaceGroups[0]?.workspaceKeys).toEqual(["c", "a", "b"]);
+  });
+
+  it("keeps the rows past a capped group's window when only the visible ones are dragged", () => {
+    // A long group renders its first window and hides the tail behind "show more". The drag
+    // hands back only the visible rows; writing that verbatim would eject the tail into
+    // Ungrouped. The reorder must fold the visible permutation into the stored order.
+    const before = layout({
+      workspaceGroups: [
+        { id: "g1", name: "In review", projectKey: "p", workspaceKeys: ["a", "b", "c", "d", "e"] },
+      ],
+    });
+
+    // Only a, b, c are on screen; the user swaps a and c.
+    const next = reorderWorkspacesInGroup(before, {
+      projectKey: "p",
+      groupId: "g1",
+      orderedVisibleKeys: ["c", "b", "a"],
+    });
+
+    // Visible rows permute inside the slots they held; d and e stay in the group, in place.
+    expect(next.workspaceGroups[0]?.workspaceKeys).toEqual(["c", "b", "a", "d", "e"]);
+  });
+
+  it("reorders the ungrouped workspace remainder without touching any group", () => {
+    const before = layout({
+      workspaceGroups: [{ id: "g1", name: "In review", projectKey: "p", workspaceKeys: ["x"] }],
+      ungroupedWorkspaceKeysByProject: { p: ["a", "b", "c", "d"] },
+    });
+
+    // a, b visible (capped), swapped; c, d hidden.
+    const next = reorderWorkspacesInGroup(before, {
+      projectKey: "p",
+      groupId: null,
+      orderedVisibleKeys: ["b", "a"],
+    });
+
+    expect(next.ungroupedWorkspaceKeysByProject.p).toEqual(["b", "a", "c", "d"]);
+    expect(next.workspaceGroups[0]?.workspaceKeys).toEqual(["x"]);
+  });
+
+  it("keeps the projects past a capped project group's window when the visible ones are dragged", () => {
+    const before = layout({
+      projectGroups: [{ id: "g1", name: "Work", projectKeys: ["a", "b", "c", "d"] }],
+    });
+
+    const next = reorderProjectsInGroup(before, {
+      groupId: "g1",
+      orderedVisibleKeys: ["b", "a"],
+    });
+
+    expect(next.projectGroups[0]?.projectKeys).toEqual(["b", "a", "c", "d"]);
+  });
+
+  it("reorders the ungrouped project remainder and keeps its hidden tail", () => {
+    const before = layout({ ungroupedProjectKeys: ["a", "b", "c", "d"] });
+
+    const next = reorderProjectsInGroup(before, {
+      groupId: null,
+      orderedVisibleKeys: ["c", "a", "b"],
+    });
+
+    expect(next.ungroupedProjectKeys).toEqual(["c", "a", "b", "d"]);
   });
 });

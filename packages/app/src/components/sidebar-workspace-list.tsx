@@ -2715,13 +2715,13 @@ function ProjectModeList({
     renameProjectGroup,
     deleteProjectGroup,
     reorderProjectGroups,
-    setProjectOrderInGroup,
+    reorderProjectsInGroup,
     moveProjectToGroup,
     renameWorkspaceGroup,
     deleteWorkspaceGroup,
     moveWorkspaceToGroup,
     reorderWorkspaceGroups,
-    setWorkspaceOrderInGroup,
+    reorderWorkspacesInGroup,
     setPinnedWorkspaceOrder,
     previewWorkspaceMove,
     previewProjectMove,
@@ -2736,7 +2736,7 @@ function ProjectModeList({
     (reorderedProjects: SidebarProjectEntry[]) => {
       const reorderedProjectKeys = reorderedProjects.map((project) => project.viewKey);
       if (isLayoutAvailable) {
-        setProjectOrderInGroup({ groupId: null, projectKeys: reorderedProjectKeys });
+        reorderProjectsInGroup({ groupId: null, orderedVisibleKeys: reorderedProjectKeys });
         return;
       }
 
@@ -2757,7 +2757,7 @@ function ProjectModeList({
         }),
       );
     },
-    [isLayoutAvailable, setProjectOrderInGroup, getProjectOrder, setProjectOrder],
+    [isLayoutAvailable, reorderProjectsInGroup, getProjectOrder, setProjectOrder],
   );
 
   // Same slot-preserving reorder as workspaces: a project group's drag list only
@@ -2766,7 +2766,7 @@ function ProjectModeList({
     (groupId: string, reorderedProjects: GroupedSidebarProject[]) => {
       const reorderedProjectKeys = reorderedProjects.map((project) => project.viewKey);
       if (isLayoutAvailable) {
-        setProjectOrderInGroup({ groupId, projectKeys: reorderedProjectKeys });
+        reorderProjectsInGroup({ groupId, orderedVisibleKeys: reorderedProjectKeys });
         return;
       }
 
@@ -2787,7 +2787,7 @@ function ProjectModeList({
         }),
       );
     },
-    [isLayoutAvailable, setProjectOrderInGroup, getProjectOrder, setProjectOrder],
+    [isLayoutAvailable, reorderProjectsInGroup, getProjectOrder, setProjectOrder],
   );
 
   // Every project group that exists anywhere in the sidebar, offered as a move target
@@ -2910,7 +2910,11 @@ function ProjectModeList({
     ) => {
       const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
       if (isLayoutAvailable) {
-        setWorkspaceOrderInGroup({ projectKey, groupId, workspaceKeys: reorderedWorkspaceKeys });
+        reorderWorkspacesInGroup({
+          projectKey,
+          groupId,
+          orderedVisibleKeys: reorderedWorkspaceKeys,
+        });
         return;
       }
 
@@ -2932,7 +2936,7 @@ function ProjectModeList({
         }),
       );
     },
-    [isLayoutAvailable, setWorkspaceOrderInGroup, getWorkspaceOrder, setWorkspaceOrder],
+    [isLayoutAvailable, reorderWorkspacesInGroup, getWorkspaceOrder, setWorkspaceOrder],
   );
 
   const [renamingGroup, setRenamingGroup] = useState<{
@@ -2991,10 +2995,10 @@ function ProjectModeList({
     (projectViewKey: string, reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
       const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
       if (isLayoutAvailable) {
-        setWorkspaceOrderInGroup({
+        reorderWorkspacesInGroup({
           projectKey: projectViewKey,
           groupId: null,
-          workspaceKeys: reorderedWorkspaceKeys,
+          orderedVisibleKeys: reorderedWorkspaceKeys,
         });
         return;
       }
@@ -3017,7 +3021,7 @@ function ProjectModeList({
         }),
       );
     },
-    [isLayoutAvailable, setWorkspaceOrderInGroup, getWorkspaceOrder, setWorkspaceOrder],
+    [isLayoutAvailable, reorderWorkspacesInGroup, getWorkspaceOrder, setWorkspaceOrder],
   );
 
   const handleWorktreeCreated = useCallback((workspaceId: string) => {

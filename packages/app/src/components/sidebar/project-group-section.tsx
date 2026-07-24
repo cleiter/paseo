@@ -4,6 +4,8 @@ import type { GestureType } from "react-native-gesture-handler";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { GroupSectionHeader } from "@/components/sidebar/group-section-header";
+import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
+import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import { TREE_INDENT_PER_LEVEL } from "@/components/tree-primitives";
 import type { GroupedSidebarProject, SidebarProjectGroup } from "@/hooks/use-sidebar-groups";
@@ -45,6 +47,16 @@ export function ProjectGroupSection({
   useNestable,
 }: ProjectGroupSectionProps) {
   const dragActiveId = useSidebarGroupDragActiveId();
+
+  // Cap a long group at its first window of rows with a "show more" toggle, the same limit
+  // every other sidebar list uses. Drag reorders only the visible rows and the write folds
+  // them back into the group's stored order, so the projects past the cap keep their place.
+  const {
+    visibleItems: visibleProjects,
+    expanded,
+    canToggle,
+    toggleExpanded,
+  } = useLimitedSidebarGroup(group.projects);
 
   // Read collapse state here rather than through the parent's props: the project
   // list's memo comparators know nothing about group state and would go stale.
@@ -120,7 +132,7 @@ export function ProjectGroupSection({
             <View style={styles.railed}>
               <DraggableList
                 testID={`sidebar-project-group-list-${group.groupId}`}
-                data={group.projects}
+                data={visibleProjects}
                 keyExtractor={keyExtractor}
                 renderItem={renderProject}
                 onDragEnd={handleDragEnd}
@@ -133,6 +145,13 @@ export function ProjectGroupSection({
                 getItemData={SIDEBAR_GROUP_DRAG_ENABLED ? getItemData : undefined}
                 activeId={dragActiveId}
               />
+              {canToggle ? (
+                <SidebarGroupToggleRow
+                  expanded={expanded}
+                  onPress={toggleExpanded}
+                  testID={`sidebar-project-group-show-more-${group.groupId}`}
+                />
+              ) : null}
             </View>
           )}
         </View>

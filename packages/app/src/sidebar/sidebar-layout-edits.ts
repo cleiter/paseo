@@ -201,6 +201,25 @@ export function reorderProjectGroups(layout: SidebarLayout, orderedIds: string[]
   };
 }
 
+// A group's drag list is capped at a visible window (the rest hide behind "show more"), so
+// a drag hands back only the rows that were ON SCREEN — a subset of the group's members.
+// Writing that subset verbatim through setProjectKeysInGroup would drop everything past the
+// cap out of the group. Merge it into the stored order instead: the visible rows permute
+// among the slots they already held and the rows below the cap stay put — the same
+// slot-preserving move the Pinned overlay and the local-order fallback already use.
+export function reorderProjectsInGroup(
+  layout: SidebarLayout,
+  input: { groupId: string | null; orderedVisibleKeys: string[] },
+): SidebarLayout {
+  return setProjectKeysInGroup(layout, {
+    groupId: input.groupId,
+    projectKeys: mergeWithinSlots({
+      currentOrder: readProjectKeys(layout, input.groupId),
+      reorderedVisibleKeys: input.orderedVisibleKeys,
+    }),
+  });
+}
+
 // Replaces one list wholesale. Every list the sidebar draws IS a document array — a
 // group's members, or the ungrouped remainder — so a drag that reorders a list can just
 // hand back that list. No merge, no slot arithmetic, no second ordering to keep in step.
@@ -348,6 +367,23 @@ export function moveWorkspaceToGroup(
       input.workspaceKey,
       overKey,
     ),
+  });
+}
+
+// The workspace twin of reorderProjectsInGroup: a capped group (or the ungrouped
+// remainder, groupId null) hands back only its visible rows, so the reorder is merged into
+// the stored keys rather than written wholesale, keeping the rows below the cap in place.
+export function reorderWorkspacesInGroup(
+  layout: SidebarLayout,
+  input: { projectKey: string; groupId: string | null; orderedVisibleKeys: string[] },
+): SidebarLayout {
+  return setWorkspaceKeysInGroup(layout, {
+    projectKey: input.projectKey,
+    groupId: input.groupId,
+    workspaceKeys: mergeWithinSlots({
+      currentOrder: readWorkspaceKeys(layout, input.projectKey, input.groupId),
+      reorderedVisibleKeys: input.orderedVisibleKeys,
+    }),
   });
 }
 

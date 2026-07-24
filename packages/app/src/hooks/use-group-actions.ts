@@ -13,10 +13,10 @@ import {
   renameProjectGroup,
   renameWorkspaceGroup,
   reorderProjectGroups,
+  reorderProjectsInGroup,
   reorderWorkspaceGroups,
+  reorderWorkspacesInGroup,
   setPinnedWorkspaceOrder,
-  setProjectKeysInGroup,
-  setWorkspaceKeysInGroup,
 } from "@/sidebar/sidebar-layout-edits";
 
 // Every group action is one edit to the layout document, applied optimistically and
@@ -65,9 +65,10 @@ export interface GroupActions {
     groupId: string | null;
     beforeKey?: string | null;
   }) => void;
-  // A drag hands back the list it reordered. Every list the sidebar draws is a document
-  // array, so the whole list can just be written back.
-  setProjectOrderInGroup: (input: { groupId: string | null; projectKeys: string[] }) => void;
+  // A drag hands back the rows it reordered — only the VISIBLE ones, since a long list is
+  // capped behind "show more". The edit merges them into the group's stored order, so the
+  // rows below the cap keep their place instead of being written out of the group.
+  reorderProjectsInGroup: (input: { groupId: string | null; orderedVisibleKeys: string[] }) => void;
 
   createWorkspaceGroup: (input: { projectKey: string; name: string }) => string;
   renameWorkspaceGroup: (groupId: string, name: string) => void;
@@ -89,10 +90,10 @@ export interface GroupActions {
   }) => void;
   // One cancel for both levels: only one drag can be in flight.
   cancelMovePreview: () => void;
-  setWorkspaceOrderInGroup: (input: {
+  reorderWorkspacesInGroup: (input: {
     projectKey: string;
     groupId: string | null;
-    workspaceKeys: string[];
+    orderedVisibleKeys: string[];
   }) => void;
 
   // The Pinned section's order — its own, separate from the order those same workspaces
@@ -168,8 +169,8 @@ export function useGroupActions(): GroupActions {
       reorderProjectGroups: (orderedIds) => {
         edit((layout) => reorderProjectGroups(layout, orderedIds));
       },
-      setProjectOrderInGroup: (input) => {
-        edit((layout) => setProjectKeysInGroup(layout, input));
+      reorderProjectsInGroup: (input) => {
+        edit((layout) => reorderProjectsInGroup(layout, input));
       },
       previewProjectMove: (input) => {
         preview((layout) => moveProjectToGroup(layout, input));
@@ -192,8 +193,8 @@ export function useGroupActions(): GroupActions {
       reorderWorkspaceGroups: (input) => {
         edit((layout) => reorderWorkspaceGroups(layout, input));
       },
-      setWorkspaceOrderInGroup: (input) => {
-        edit((layout) => setWorkspaceKeysInGroup(layout, input));
+      reorderWorkspacesInGroup: (input) => {
+        edit((layout) => reorderWorkspacesInGroup(layout, input));
       },
       previewWorkspaceMove: (input) => {
         preview((layout) => moveWorkspaceToGroup(layout, input));
