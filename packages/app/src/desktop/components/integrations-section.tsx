@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { type ReactElement, useCallback, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -131,34 +131,28 @@ export function IntegrationsSection() {
     [theme.iconSize.sm, theme.colors.foregroundMuted],
   );
 
-  const trailing = useMemo(
+  const cliDocsLink = useMemo(
     () => (
-      <View style={styles.headerLinks}>
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={arrowIcon}
-          textStyle={settingsStyles.sectionHeaderLinkText}
-          style={settingsStyles.sectionHeaderLink}
-          onPress={handleOpenCliDocs}
-          accessibilityLabel={t("settings.integrations.docs.openCli")}
-        >
-          {t("settings.integrations.docs.cli")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={arrowIcon}
-          textStyle={settingsStyles.sectionHeaderLinkText}
-          style={settingsStyles.sectionHeaderLink}
-          onPress={handleOpenSkillsDocs}
-          accessibilityLabel={t("settings.integrations.docs.openSkills")}
-        >
-          {t("settings.integrations.docs.skills")}
-        </Button>
-      </View>
+      <DocsLink
+        icon={arrowIcon}
+        label={t("settings.integrations.docs.cli")}
+        accessibilityLabel={t("settings.integrations.docs.openCli")}
+        onPress={handleOpenCliDocs}
+      />
     ),
-    [arrowIcon, handleOpenCliDocs, handleOpenSkillsDocs, t],
+    [arrowIcon, handleOpenCliDocs, t],
+  );
+
+  const skillsDocsLink = useMemo(
+    () => (
+      <DocsLink
+        icon={arrowIcon}
+        label={t("settings.integrations.docs.skills")}
+        accessibilityLabel={t("settings.integrations.docs.openSkills")}
+        onPress={handleOpenSkillsDocs}
+      />
+    ),
+    [arrowIcon, handleOpenSkillsDocs, t],
   );
 
   if (!showSection) {
@@ -175,7 +169,7 @@ export function IntegrationsSection() {
       skillsStatus.selection.skills.some((name) => skillsStatus.available.includes(name)));
 
   return (
-    <SettingsSection title={t("settings.integrations.title")} trailing={trailing}>
+    <SettingsSection title={t("settings.integrations.title")}>
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
@@ -188,6 +182,7 @@ export function IntegrationsSection() {
             <Text style={settingsStyles.rowHint}>
               {t("settings.integrations.commandLine.description")}
             </Text>
+            <View style={styles.docsLinkRow}>{cliDocsLink}</View>
           </View>
           {cliStatus?.installed ? (
             <View style={styles.installedLabel}>
@@ -218,6 +213,7 @@ export function IntegrationsSection() {
                 ? t("settings.integrations.skills.updateAvailable")
                 : t("settings.integrations.skills.description")}
             </Text>
+            <View style={styles.docsLinkRow}>{skillsDocsLink}</View>
           </View>
           <View style={styles.actionsRow}>
             <Button
@@ -251,6 +247,29 @@ export function IntegrationsSection() {
         />
       ) : null}
     </SettingsSection>
+  );
+}
+
+interface DocsLinkProps {
+  icon: ReactElement;
+  label: string;
+  accessibilityLabel: string;
+  onPress: () => void;
+}
+
+function DocsLink({ icon, label, accessibilityLabel, onPress }: DocsLinkProps) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      leftIcon={icon}
+      textStyle={settingsStyles.sectionHeaderLinkText}
+      style={settingsStyles.sectionHeaderLink}
+      onPress={onPress}
+      accessibilityLabel={accessibilityLabel}
+    >
+      {label}
+    </Button>
   );
 }
 
@@ -305,15 +324,17 @@ function SkillsActions({ state, isWorking, onInstall, onUpdate, onUninstall }: S
 }
 
 const styles = StyleSheet.create((theme) => ({
-  headerLinks: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[0],
-  },
   rowTitleRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  docsLinkRow: {
+    flexDirection: "row",
+    marginTop: theme.spacing[1],
+    // Offset the sm Button's paddingHorizontal so the link's glyph sits flush
+    // with the title/description left edge instead of inset by the tap padding.
+    marginLeft: -theme.spacing[3],
   },
   installedLabel: {
     flexDirection: "row",
