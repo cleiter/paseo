@@ -168,6 +168,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
+  "cycle-group-mode": "settings.shortcuts.help.cycleGroupMode",
 };
 
 const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
@@ -1058,6 +1059,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "agent-input",
       label: "Mute/unmute voice mode",
       keys: ["Space"],
+    },
+  },
+  {
+    id: "sidebar-group-mode-cycle-cmd-shift-g-mac",
+    action: "sidebar.cycle.group-mode",
+    combo: "Cmd+Shift+G",
+    when: { mac: true, commandCenter: false, terminal: false },
+    help: {
+      id: "cycle-group-mode",
+      section: "panels",
+      label: "Cycle sidebar grouping",
+      keys: ["mod", "shift", "G"],
+    },
+  },
+  {
+    id: "sidebar-group-mode-cycle-ctrl-shift-g-non-mac",
+    action: "sidebar.cycle.group-mode",
+    combo: "Ctrl+Shift+G",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "cycle-group-mode",
+      section: "panels",
+      label: "Cycle sidebar grouping",
+      keys: ["mod", "shift", "G"],
     },
   },
 ];

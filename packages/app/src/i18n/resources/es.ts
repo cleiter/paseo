@@ -1960,6 +1960,7 @@ export const es: TranslationResources = {
         agentInput: "EntradaAgent",
       },
       help: {
+        cycleGroupMode: "Cambiar agrupación de la barra lateral",
         openProject: "Abrir proyecto",
         newWorkspace: "Nuevo espacio de trabajo",
         newWorktree: "Nuevo árbol de trabajo",
