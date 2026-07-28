@@ -46,9 +46,13 @@ function useProviderSubagentDescriptor(
   );
   const provider = descriptor?.provider ?? parentProvider ?? "agent";
   const label = descriptor?.title?.trim() || descriptor?.description?.trim() || "Subagent";
+  const modelLabel = descriptor?.modelLabel?.trim();
+  const subtitle = modelLabel
+    ? `${formatProviderLabel(provider)} subagent · ${modelLabel}`
+    : `${formatProviderLabel(provider)} subagent`;
   return {
     label,
-    subtitle: `${formatProviderLabel(provider)} subagent`,
+    subtitle,
     tooltip: label,
     titleState: descriptor ? "ready" : "loading",
     icon: getProviderIcon(provider),

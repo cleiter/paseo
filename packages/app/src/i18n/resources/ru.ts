@@ -1498,6 +1498,7 @@ export const ru: TranslationResources = {
     archiveTooltip: "Архивный субагент",
     archiveFinishedAction: "Архивировать завершенные субагенты",
     archiveFinishedTooltip: "Архивировать завершенные",
+    rowAccessibilityLabelWithModel: "{{label}}, {{model}}",
   },
   panels: {
     draft: {

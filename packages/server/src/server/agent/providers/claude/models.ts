@@ -31,6 +31,32 @@ export function findClaudeModel(
   return getClaudeModels().find((model) => model.id === normalizedModelId);
 }
 
+export interface ClaudeModelIdentity {
+  model: string;
+  modelLabel: string;
+}
+
+/**
+ * Resolve an observed runtime model string to a canonical id plus a display label.
+ *
+ * A model the manifest does not know keeps its raw id for both. Substituting a known
+ * model's label would report the wrong model with full confidence, which is worse than
+ * showing an unfamiliar id.
+ */
+export function resolveClaudeModelIdentity(
+  value: string | null | undefined,
+): ClaudeModelIdentity | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) {
+    return null;
+  }
+  const definition = findClaudeModel(trimmed);
+  return {
+    model: definition?.id ?? trimmed,
+    modelLabel: definition?.label ?? trimmed,
+  };
+}
+
 export async function getClaudeModelsWithSettings(
   logger: Logger,
   configDir?: string,

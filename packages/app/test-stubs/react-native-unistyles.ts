@@ -10,6 +10,7 @@ const testTheme = {
     surface1: "#fafafa",
     surface2: "#f4f4f5",
     border: "#e4e4e7",
+    borderAccent: "#ececf1",
   },
   spacing: [0, 4, 8, 12, 16, 20, 24, 28, 32],
   fontSize: {
@@ -23,6 +24,12 @@ const testTheme = {
   borderRadius: {
     base: 4,
     md: 6,
+    "2xl": 16,
+  },
+  borderWidth: {
+    0: 0,
+    1: 1,
+    2: 2,
   },
 };
 

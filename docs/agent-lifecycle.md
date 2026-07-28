@@ -132,6 +132,17 @@ Clicking either kind opens a workspace tab. A Paseo subagent tab is a normal int
 
 Provider timelines use the same structural timeline item format but deliberately have a separate lifecycle and transport. A provider thread/session identifier is not a Paseo agent identifier, and closing its tab is always layout-only.
 
+### What a provider subagent row can say about its model
+
+A subagent can run a different model from its parent — via the `Agent` tool's `model` override or a `.claude/agents/*.md` frontmatter model — so the row reports its own.
+
+- **The model is observable, per message.** Every Claude sidechain assistant message is an ordinary `SDKAssistantMessage` whose `message.model` is required, so `ClaudeSidechainTracker` reads it off each message rather than off the spawn. It is captured **write-last**: a run can switch models mid-flight (fallback), and the last observed model is what the run is actually on. `subagent_type`/`task_description` are captured **write-once**, because they are spawn facts that the tool-input path also supplies, and two sources writing the same field every message produce oscillating upserts.
+- **The label is resolved on the daemon, not the client.** The row payload carries both `model` (canonical id) and `modelLabel` (display string). The client has no cwd-scoped provider snapshot at the layer that renders these rows, rows carry a per-row provider, and each provider owns its own model manifest — so resolution belongs next to the manifest. Display labels already travel on the wire (`AgentModelDefinitionSchema.label`), so this is the existing pattern.
+- **An unrecognized id degrades to itself.** `normalizeClaudeRuntimeModelId` returns `null` for ids it doesn't know (new models, Bedrock ARNs, bare aliases) — it does not pass them through. The resolver falls back to the raw id for both fields. Showing an unfamiliar id beats confidently showing a _different_ model's name.
+- **Effort is not available on the live path.** The SDK declares `effort` on agent definitions and hook input, but never on an assistant message, and no reasoning-budget field appears on the wire. The CLI-written JSONL transcript _does_ record `effort` per sidechain entry, so replay could show it while live rows could not — which is why the track shows a model and no effort at all rather than an indicator that appears only after a resume.
+
+Replay derives the same fields from JSONL in `buildClaudePersistedSidechainAgentEvents`, and must match the live path (last model wins). That path runs on **session resume**, not on client reconnect: reloading a client only re-lists the daemon's in-memory store, so verifying replay means restarting the agent or the daemon.
+
 Archived Paseo subagents disappear from the track, by design. To remove one from the track without closing its tab, use the **archive button** on the row — it opens a confirm dialog and archives the subagent on confirm. Provider-owned rows have no individual Paseo lifecycle controls.
 
 The track header's **Archive finished** action hides finished provider-owned rows in the current app session. Their native sessions and timelines are untouched, and managed Paseo subagents are not archived by this bulk action. If a hidden provider child starts running again, the app brings it back to the track.

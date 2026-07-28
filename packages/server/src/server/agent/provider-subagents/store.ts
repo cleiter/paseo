@@ -21,6 +21,10 @@ export interface ProviderSubagentDescriptor {
   updatedAt: string;
   toolCallId: string | null;
   cwd: string | null;
+  /** Canonical model id the subagent is running, when the provider reports one. */
+  model: string | null;
+  /** Display label for `model`, resolved against the provider's own model manifest. */
+  modelLabel: string | null;
 }
 
 export type ProviderSubagentInputEvent =
@@ -32,6 +36,8 @@ export type ProviderSubagentInputEvent =
       status: ProviderSubagentStatus;
       toolCallId?: string | null;
       cwd?: string | null;
+      model?: string | null;
+      modelLabel?: string | null;
       timestamp?: string;
     }
   | {
@@ -56,6 +62,22 @@ export type ProviderSubagentStoreEvent =
 
 function storeKey(parentAgentId: string, subagentId: string): string {
   return `${parentAgentId}\0${subagentId}`;
+}
+
+/**
+ * Merge one descriptor field across upserts.
+ *
+ * Providers send partial upserts — a `finish` event carries a status and nothing else — so an
+ * omitted field must keep the value already on record. An explicit `null` still clears it.
+ */
+function mergeDescriptorField<T>(
+  next: T | null | undefined,
+  previous: T | null | undefined,
+): T | null {
+  if (next === undefined) {
+    return previous ?? null;
+  }
+  return next;
 }
 
 export class ProviderSubagentStore {
@@ -100,15 +122,15 @@ export class ProviderSubagentStore {
       id: event.id,
       parentAgentId,
       provider,
-      title: event.title === undefined ? (previous?.title ?? null) : event.title,
-      description:
-        event.description === undefined ? (previous?.description ?? null) : event.description,
+      title: mergeDescriptorField(event.title, previous?.title),
+      description: mergeDescriptorField(event.description, previous?.description),
       status: event.status,
       createdAt: previous?.createdAt ?? timestamp,
       updatedAt: timestamp,
-      toolCallId:
-        event.toolCallId === undefined ? (previous?.toolCallId ?? null) : event.toolCallId,
-      cwd: event.cwd === undefined ? (previous?.cwd ?? null) : event.cwd,
+      toolCallId: mergeDescriptorField(event.toolCallId, previous?.toolCallId),
+      cwd: mergeDescriptorField(event.cwd, previous?.cwd),
+      model: mergeDescriptorField(event.model, previous?.model),
+      modelLabel: mergeDescriptorField(event.modelLabel, previous?.modelLabel),
     };
     this.descriptors.set(key, subagent);
     return { type: "upsert", subagent };

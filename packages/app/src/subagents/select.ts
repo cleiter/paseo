@@ -25,6 +25,11 @@ export interface ProviderSubagentRow {
   status: ProviderSubagentDescriptorPayload["status"];
   requiresAttention: boolean;
   createdAt: Date;
+  /**
+   * Display label for the model the subagent is running, already resolved by the daemon.
+   * Null when the host predates the field or the provider reports no model.
+   */
+  modelLabel: string | null;
 }
 
 export type SubagentRow = PaseoSubagentRow | ProviderSubagentRow;
@@ -101,6 +106,8 @@ export function selectProviderSubagentsForParent(
       status: subagent.status,
       requiresAttention: subagent.status === "failed",
       createdAt: new Date(subagent.createdAt),
+      // COMPAT(providerSubagentModel): added in v0.2.X, remove the ?? null when floor >= v0.2.X.
+      modelLabel: subagent.modelLabel ?? null,
     });
   }
   rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());

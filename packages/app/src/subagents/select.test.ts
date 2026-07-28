@@ -94,6 +94,59 @@ describe("selectSubagentsForParent", () => {
     ).toEqual(["provider-child"]);
   });
 
+  it("carries the daemon-resolved model label onto provider rows", () => {
+    useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: "provider-child",
+        parentAgentId: "parent-a",
+        provider: "claude",
+        title: "Explore",
+        description: null,
+        status: "running",
+        createdAt: "2026-03-08T10:01:00.000Z",
+        updatedAt: "2026-03-08T10:02:00.000Z",
+        toolCallId: "call-1",
+        model: "claude-opus-4-8",
+        modelLabel: "Opus 4.8",
+      },
+    });
+
+    expect(
+      selectProviderSubagentsForParent(
+        useProviderSubagentStore.getState(),
+        { serverId: SERVER_ID, parentAgentId: "parent-a" },
+        true,
+      )[0]?.modelLabel,
+    ).toBe("Opus 4.8");
+  });
+
+  // A daemon that predates the field omits it entirely; the row still has to build.
+  it("leaves the model label null when the host reports no model", () => {
+    useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: "provider-child",
+        parentAgentId: "parent-a",
+        provider: "codex",
+        title: "Provider child",
+        description: null,
+        status: "running",
+        createdAt: "2026-03-08T10:01:00.000Z",
+        updatedAt: "2026-03-08T10:02:00.000Z",
+        toolCallId: "call-1",
+      },
+    });
+
+    expect(
+      selectProviderSubagentsForParent(
+        useProviderSubagentStore.getState(),
+        { serverId: SERVER_ID, parentAgentId: "parent-a" },
+        true,
+      )[0]?.modelLabel,
+    ).toBe(null);
+  });
+
   it("hides locally dismissed provider children while retaining their descriptor", () => {
     const store = useProviderSubagentStore.getState();
     store.applyUpdate(SERVER_ID, {

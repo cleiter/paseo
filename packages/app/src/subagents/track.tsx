@@ -40,7 +40,9 @@ export interface SubagentsTrackProps {
 
 const SUBAGENTS_LIST_MAX_HEIGHT = 200;
 
-function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
+function buildRowPresentation(
+  row: SubagentRow,
+): WorkspaceTabPresentation & { modelLabel: string | null } {
   const data = buildSubagentRowPresentationData(row);
   return {
     ...data,
@@ -169,6 +171,12 @@ function SubagentsTrackRow({
   const presentation = useMemo(() => buildRowPresentation(row), [row]);
   const displayLabel =
     presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
+  const modelLabel = presentation.modelLabel;
+  // The model is only rendered as a trailing chip, so it would be invisible to a screen
+  // reader without folding it into the row's own label.
+  const accessibilityLabel = modelLabel
+    ? t("subagents.rowAccessibilityLabelWithModel", { label: displayLabel, model: modelLabel })
+    : displayLabel;
   const handlePress = useCallback(() => {
     if (row.kind === "provider") {
       onOpenProviderSubagent(row.parentAgentId, row.id);
@@ -194,7 +202,7 @@ function SubagentsTrackRow({
     <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={displayLabel}
+        accessibilityLabel={accessibilityLabel}
         testID={`subagents-track-row-${row.id}`}
         onPress={handlePress}
       >
@@ -204,6 +212,14 @@ function SubagentsTrackRow({
             <Text style={styles.rowLabel} numberOfLines={1}>
               {displayLabel}
             </Text>
+            {modelLabel ? (
+              // No numberOfLines: on web it compiles to a maxWidth clamp that survives
+              // flexShrink: 0, which would make the chip ellipsize itself instead of
+              // holding its width and letting the title absorb the squeeze.
+              <Text style={styles.rowModelLabel} testID={`subagents-track-model-${row.id}`}>
+                {modelLabel}
+              </Text>
+            ) : null}
             {row.kind === "paseo" ? (
               <SubagentRowActions
                 rowId={row.id}
@@ -390,6 +406,11 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+  },
+  rowModelLabel: {
+    flexShrink: 0,
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   actionClusterVisible: {
     flexDirection: "row",

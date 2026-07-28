@@ -1,5 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
+import { resolveClaudeModelIdentity } from "./models.js";
 import {
   mapClaudeCompletedToolCall,
   mapClaudeFailedToolCall,
@@ -8,6 +9,7 @@ import {
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 
 import type { AgentMetadata, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
+import type { ProviderSubagentInputEvent } from "../../provider-subagents/store.js";
 
 interface ClaudeContentChunk {
   type: string;
@@ -25,6 +27,8 @@ interface SubAgentActivityState {
   name?: string;
   subAgentType?: string;
   description?: string;
+  model?: string;
+  modelLabel?: string;
   actions: SubAgentActionEntry[];
   actionKeys: string[];
   nextActionIndex: number;
@@ -75,7 +79,9 @@ export class ClaudeSidechainTracker {
       } satisfies SubAgentActivityState);
     this.activeSidechains.set(parentToolUseId, state);
 
-    const contextUpdated = this.updateSubAgentContextFromTaskInput(state, parentToolUseId);
+    const taskInputUpdated = this.updateSubAgentContextFromTaskInput(state, parentToolUseId);
+    const messageContextUpdated = this.updateSubAgentContextFromMessage(state, message);
+    const contextUpdated = taskInputUpdated || messageContextUpdated;
     const actionCandidates = this.extractSubAgentActionCandidates(message);
     const childTimelineItems = [
       ...this.extractSubAgentTimelineItems(message),
@@ -128,14 +134,7 @@ export class ClaudeSidechainTracker {
       {
         type: "provider_subagent",
         provider: "claude",
-        event: {
-          type: "upsert",
-          id: parentToolUseId,
-          title: state.name ?? state.subAgentType ?? "Claude subagent",
-          description: state.description ?? null,
-          status: "running",
-          toolCallId: parentToolUseId,
-        },
+        event: this.buildUpsertEvent(parentToolUseId, state, "running"),
       },
       ...childTimelineItems.map(
         (item): AgentStreamEvent => ({
@@ -161,14 +160,7 @@ export class ClaudeSidechainTracker {
       events.push({
         type: "provider_subagent",
         provider: "claude",
-        event: {
-          type: "upsert",
-          id,
-          title: state.name ?? state.subAgentType ?? "Claude subagent",
-          description: state.description ?? null,
-          status,
-          toolCallId: id,
-        },
+        event: this.buildUpsertEvent(id, state, status),
       });
     }
     this.activeSidechains.clear();
@@ -183,16 +175,25 @@ export class ClaudeSidechainTracker {
       {
         type: "provider_subagent",
         provider: "claude",
-        event: {
-          type: "upsert",
-          id,
-          title: state.name ?? state.subAgentType ?? "Claude subagent",
-          description: state.description ?? null,
-          status,
-          toolCallId: id,
-        },
+        event: this.buildUpsertEvent(id, state, status),
       },
     ];
+  }
+
+  private buildUpsertEvent(
+    id: string,
+    state: SubAgentActivityState,
+    status: "running" | "completed" | "failed" | "canceled",
+  ): Extract<ProviderSubagentInputEvent, { type: "upsert" }> {
+    return {
+      type: "upsert",
+      id,
+      title: state.name ?? state.subAgentType ?? "Claude subagent",
+      description: state.description ?? null,
+      status,
+      toolCallId: id,
+      ...(state.model ? { model: state.model, modelLabel: state.modelLabel ?? state.model } : {}),
+    };
   }
 
   delete(toolUseId: string): void {
@@ -285,6 +286,55 @@ export class ClaudeSidechainTracker {
       state.description = nextDescription;
       changed = true;
     }
+    return changed;
+  }
+
+  /**
+   * Read context the SDK puts on the message itself rather than in the Task tool input.
+   *
+   * The model is only observable here — it is a field of every sidechain assistant message
+   * and is never restated in the tool input. `subagent_type`/`task_description` are also on
+   * the message, which matters because the tool-input cache entry is dropped when the tool
+   * result arrives; for a backgrounded agent that happens before the sidechain streams, so
+   * the message is the only source that still has them.
+   *
+   * Precedence: the model is write-last (a run can switch models on fallback, and the newest
+   * observation is the truth), while the spawn facts are write-once so the two sources cannot
+   * overwrite each other and emit an upsert on every message.
+   */
+  private updateSubAgentContextFromMessage(
+    state: SubAgentActivityState,
+    message: SDKMessage,
+  ): boolean {
+    if (message.type !== "assistant") {
+      return false;
+    }
+
+    let changed = false;
+
+    const identity = resolveClaudeModelIdentity(readTrimmedString(message.message?.model));
+    if (identity && (identity.model !== state.model || identity.modelLabel !== state.modelLabel)) {
+      state.model = identity.model;
+      state.modelLabel = identity.modelLabel;
+      changed = true;
+    }
+
+    const messageRecord = message as unknown as Record<string, unknown>;
+    if (!state.subAgentType) {
+      const nextSubAgentType = this.normalizeSubAgentText(messageRecord.subagent_type);
+      if (nextSubAgentType) {
+        state.subAgentType = nextSubAgentType;
+        changed = true;
+      }
+    }
+    if (!state.description) {
+      const nextDescription = this.normalizeSubAgentText(messageRecord.task_description);
+      if (nextDescription) {
+        state.description = nextDescription;
+        changed = true;
+      }
+    }
+
     return changed;
   }
 

@@ -3538,6 +3538,12 @@ export const ProviderSubagentDescriptorPayloadSchema = z.object({
   updatedAt: z.string(),
   toolCallId: z.string().nullable(),
   cwd: z.string().nullable().optional(),
+  // COMPAT(providerSubagentModel): added in v0.2.X, remove optional after 2027-01-28.
+  // `model` is the canonical id; `modelLabel` is resolved against the provider's own model
+  // manifest on the daemon, because the client has no cwd-scoped provider snapshot at the
+  // layer that renders subagent rows.
+  model: z.string().nullable().optional(),
+  modelLabel: z.string().nullable().optional(),
 });
 
 export type ProviderSubagentDescriptorPayload = z.infer<

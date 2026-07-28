@@ -1480,6 +1480,7 @@ export const ja: TranslationResources = {
     archiveTooltip: "サブエージェントをアーカイブ",
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
     archiveFinishedTooltip: "完了した項目をアーカイブ",
+    rowAccessibilityLabelWithModel: "{{label}}、{{model}}",
   },
   panels: {
     draft: {

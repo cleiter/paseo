@@ -103,4 +103,70 @@ describe("ProviderSubagentStore", () => {
     expect(page.rows.at(-1)?.seq).toBe(101);
     expect(page.hasOlder).toBe(false);
   });
+
+  // The provider reports the model once, then sends status-only upserts as the subagent
+  // finishes. Those must not blank out what was already learned.
+  test("retains the model across upserts that do not mention it", () => {
+    const subagents = new ProviderSubagentStore();
+
+    subagents.apply("parent-a", "claude", {
+      type: "upsert",
+      id: "child-1",
+      title: "Explore",
+      status: "running",
+      model: "claude-opus-4-8",
+      modelLabel: "Opus 4.8",
+    });
+    subagents.apply("parent-a", "claude", {
+      type: "upsert",
+      id: "child-1",
+      status: "completed",
+    });
+
+    expect(subagents.get("parent-a", "child-1")).toMatchObject({
+      status: "completed",
+      model: "claude-opus-4-8",
+      modelLabel: "Opus 4.8",
+    });
+  });
+
+  test("clears the model only when a provider explicitly reports none", () => {
+    const subagents = new ProviderSubagentStore();
+
+    subagents.apply("parent-a", "claude", {
+      type: "upsert",
+      id: "child-1",
+      status: "running",
+      model: "claude-opus-4-8",
+      modelLabel: "Opus 4.8",
+    });
+    subagents.apply("parent-a", "claude", {
+      type: "upsert",
+      id: "child-1",
+      status: "running",
+      model: null,
+      modelLabel: null,
+    });
+
+    expect(subagents.get("parent-a", "child-1")).toMatchObject({
+      model: null,
+      modelLabel: null,
+    });
+  });
+
+  test("defaults the model to null for providers that never report one", () => {
+    const subagents = new ProviderSubagentStore();
+
+    subagents.apply("parent-a", "opencode", {
+      type: "upsert",
+      id: "child-1",
+      title: "Explore",
+      status: "running",
+    });
+
+    expect(subagents.get("parent-a", "child-1")).toMatchObject({
+      model: null,
+      modelLabel: null,
+    });
+  });
 });

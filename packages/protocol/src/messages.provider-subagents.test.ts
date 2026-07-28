@@ -73,4 +73,50 @@ describe("provider subagent protocol", () => {
       }),
     ).toMatchObject({ payload: { subagents: [{ id: "child-1" }] } });
   });
+
+  test("accepts a provider child model while remaining compatible when absent", () => {
+    const descriptor = {
+      id: "child-1",
+      parentAgentId: "parent-1",
+      provider: "claude",
+      title: "Explore",
+      description: null,
+      status: "running",
+      createdAt: "2026-07-12T10:00:00.000Z",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+      toolCallId: null,
+    };
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.provider_subagents.update",
+        payload: {
+          kind: "upsert",
+          subagent: { ...descriptor, model: "claude-opus-4-8", modelLabel: "Opus 4.8" },
+        },
+      }),
+    ).toMatchObject({
+      payload: { subagent: { model: "claude-opus-4-8", modelLabel: "Opus 4.8" } },
+    });
+
+    // A daemon that predates the field sends neither key; parsing must still succeed so an
+    // old daemon keeps working against a new client.
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.provider_subagents.update",
+        payload: { kind: "upsert", subagent: descriptor },
+      }),
+    ).toMatchObject({ payload: { subagent: { id: "child-1" } } });
+
+    // A provider that has no model to report may send an explicit null.
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.provider_subagents.update",
+        payload: {
+          kind: "upsert",
+          subagent: { ...descriptor, model: null, modelLabel: null },
+        },
+      }),
+    ).toMatchObject({ payload: { subagent: { model: null, modelLabel: null } } });
+  });
 });

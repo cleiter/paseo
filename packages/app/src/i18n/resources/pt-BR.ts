@@ -1493,6 +1493,7 @@ export const ptBR: TranslationResources = {
     archiveTooltip: "Arquivar subagente",
     archiveFinishedAction: "Arquivar subagentes concluídos",
     archiveFinishedTooltip: "Arquivar concluídos",
+    rowAccessibilityLabelWithModel: "{{label}}, {{model}}",
   },
   panels: {
     draft: {

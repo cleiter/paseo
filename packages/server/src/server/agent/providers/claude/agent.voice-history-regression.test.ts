@@ -152,6 +152,7 @@ describe("ClaudeAgentSession history replay regression", () => {
           type: "assistant",
           isSidechain: true,
           agentId: "history-child",
+          attributionAgent: "Explore",
           uuid: "history-child-message",
           timestamp: "2026-07-12T10:00:01.000Z",
           sessionId: "history-session",
@@ -159,7 +160,26 @@ describe("ClaudeAgentSession history replay regression", () => {
           message: {
             id: "history-child-message",
             role: "assistant",
+            model: "claude-sonnet-5",
             content: [{ type: "text", text: HISTORY_SIDECHAIN_MARKER }],
+          },
+        }),
+        // A second turn on a different model: a sidechain can switch models mid-run, and the
+        // live tracker ends on the newest one, so replay has to agree.
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: "history-child",
+          attributionAgent: "Explore",
+          uuid: "history-child-message-2",
+          timestamp: "2026-07-12T10:00:02.000Z",
+          sessionId: "history-session",
+          cwd,
+          message: {
+            id: "history-child-message-2",
+            role: "assistant",
+            model: "claude-opus-4-8",
+            content: [{ type: "text", text: "second sidechain turn" }],
           },
         }),
         JSON.stringify({
@@ -324,6 +344,105 @@ describe("ClaudeAgentSession history replay regression", () => {
         type: "upsert",
         id: "history-task-call",
         status: "completed",
+      }),
+    });
+  });
+
+  test("replays the last model a persisted sidechain ran on", async () => {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.resumeSession(
+      {
+        provider: "claude",
+        sessionId: "history-session",
+        nativeHandle: "history-session",
+        metadata: { provider: "claude", cwd },
+      },
+      { cwd },
+    );
+    const historyEvents: AgentStreamEvent[] = [];
+
+    try {
+      for await (const event of session.streamHistory()) historyEvents.push(event);
+    } finally {
+      await session.close();
+    }
+
+    expect(historyEvents).toContainEqual({
+      type: "provider_subagent",
+      provider: "claude",
+      event: expect.objectContaining({
+        type: "upsert",
+        id: "history-task-call",
+        status: "running",
+        model: "claude-opus-4-8",
+        modelLabel: "Opus 4.8",
+      }),
+    });
+  });
+
+  // The parent transcript is where the subagent's name lives, but it can be absent — the
+  // Task block may have been compacted away, or the sidechain may be all that survives.
+  // The sidechain's own attributionAgent keeps the row titled instead of "Claude subagent".
+  test("titles a replayed sidechain from attributionAgent when the parent call is gone", async () => {
+    const historyDir = claudeProjectDirSync(cwd, { configDir });
+    writeFileSync(
+      path.join(historyDir, "orphan-session.jsonl"),
+      [
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: "orphan-child",
+          attributionAgent: "Explore",
+          uuid: "orphan-child-message",
+          timestamp: "2026-07-12T11:00:00.000Z",
+          sessionId: "orphan-session",
+          cwd,
+          message: {
+            id: "orphan-child-message",
+            role: "assistant",
+            model: "claude-haiku-4-5",
+            content: [{ type: "text", text: "orphan sidechain turn" }],
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.resumeSession(
+      {
+        provider: "claude",
+        sessionId: "orphan-session",
+        nativeHandle: "orphan-session",
+        metadata: { provider: "claude", cwd },
+      },
+      { cwd },
+    );
+    const historyEvents: AgentStreamEvent[] = [];
+
+    try {
+      for await (const event of session.streamHistory()) historyEvents.push(event);
+    } finally {
+      await session.close();
+    }
+
+    expect(historyEvents).toContainEqual({
+      type: "provider_subagent",
+      provider: "claude",
+      event: expect.objectContaining({
+        type: "upsert",
+        id: "orphan-child",
+        title: "Explore",
+        model: "claude-haiku-4-5",
+        modelLabel: "Haiku 4.5",
       }),
     });
   });

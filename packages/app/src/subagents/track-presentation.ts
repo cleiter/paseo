@@ -15,6 +15,12 @@ export interface SubagentRowPresentationData {
   subtitle: string;
   titleState: "ready" | "loading";
   statusBucket: SidebarStateBucket | null;
+  /**
+   * Model label to show alongside the title, or null to show nothing. Only provider
+   * sidechains report a model today; paseo children carry one on their agent record but
+   * resolving its label needs a provider snapshot this layer does not have.
+   */
+  modelLabel: string | null;
 }
 
 export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowPresentationData {
@@ -26,6 +32,7 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
     label: label ?? "",
     subtitle: "",
     titleState: label ? "ready" : "loading",
+    modelLabel: row.kind === "provider" ? row.modelLabel : null,
     statusBucket: deriveSidebarStateBucket({
       status,
       requiresAttention: false,

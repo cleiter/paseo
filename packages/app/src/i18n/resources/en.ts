@@ -1475,6 +1475,7 @@ export const en = {
     archiveTooltip: "Archive subagent",
     archiveFinishedAction: "Archive finished subagents",
     archiveFinishedTooltip: "Archive finished",
+    rowAccessibilityLabelWithModel: "{{label}}, {{model}}",
   },
   panels: {
     draft: {

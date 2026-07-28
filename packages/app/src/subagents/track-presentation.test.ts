@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PaseoSubagentRow, SubagentRow } from "./select";
+import type { PaseoSubagentRow, ProviderSubagentRow, SubagentRow } from "./select";
 import {
   buildSubagentRowPresentationData,
   countFinishedSubagents,
@@ -18,6 +18,22 @@ function row(
     status: overrides.status ?? "idle",
     requiresAttention: overrides.requiresAttention ?? false,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
+  };
+}
+
+function providerRow(
+  overrides: Partial<ProviderSubagentRow> & Pick<ProviderSubagentRow, "id">,
+): ProviderSubagentRow {
+  return {
+    kind: "provider",
+    id: overrides.id,
+    parentAgentId: overrides.parentAgentId ?? "parent",
+    provider: overrides.provider ?? "claude",
+    title: overrides.title ?? `Subagent ${overrides.id}`,
+    status: overrides.status ?? "running",
+    requiresAttention: overrides.requiresAttention ?? false,
+    createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
+    modelLabel: overrides.modelLabel ?? null,
   };
 }
 
@@ -76,26 +92,14 @@ describe("formatHeaderLabel", () => {
 describe("countFinishedSubagents", () => {
   it("counts only terminal provider-owned children", () => {
     const providerRows: SubagentRow[] = [
-      {
-        kind: "provider",
-        id: "native-running",
-        parentAgentId: "parent",
-        provider: "claude",
-        title: "running",
-        status: "running",
-        requiresAttention: false,
-        createdAt: new Date("2026-04-20T00:00:00.000Z"),
-      },
-      {
-        kind: "provider",
+      providerRow({ id: "native-running", title: "running", status: "running" }),
+      providerRow({
         id: "native-failed",
-        parentAgentId: "parent",
-        provider: "claude",
         title: "failed",
         status: "failed",
         requiresAttention: true,
         createdAt: new Date("2026-04-20T00:00:01.000Z"),
-      },
+      }),
     ];
 
     expect(
@@ -164,5 +168,22 @@ describe("buildSubagentRowPresentationData", () => {
       buildSubagentRowPresentationData(row({ id: "a", status: "idle", requiresAttention: true }))
         .statusBucket,
     ).toBe("done");
+  });
+
+  it("surfaces the model label a provider row reports", () => {
+    expect(
+      buildSubagentRowPresentationData(providerRow({ id: "a", modelLabel: "Opus 4.8" })).modelLabel,
+    ).toBe("Opus 4.8");
+  });
+
+  // An older daemon sends no model at all; the row must simply render without a chip.
+  it("leaves the model label null when a provider row reports none", () => {
+    expect(
+      buildSubagentRowPresentationData(providerRow({ id: "a", modelLabel: null })).modelLabel,
+    ).toBe(null);
+  });
+
+  it("leaves the model label null for paseo rows", () => {
+    expect(buildSubagentRowPresentationData(row({ id: "a" })).modelLabel).toBe(null);
   });
 });

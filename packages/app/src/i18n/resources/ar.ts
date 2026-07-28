@@ -1464,6 +1464,7 @@ export const ar: TranslationResources = {
     archiveTooltip: "أرشفة الوكيل الفرعي",
     archiveFinishedAction: "أرشفة الوكلاء الفرعيين المكتملين",
     archiveFinishedTooltip: "أرشفة المكتملين",
+    rowAccessibilityLabelWithModel: "{{label}}، {{model}}",
   },
   panels: {
     draft: {

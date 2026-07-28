@@ -30,9 +30,11 @@ import {
   mapTaskNotificationUserContentToToolCall,
 } from "./task-notification-tool-call.js";
 import {
+  type ClaudeModelIdentity,
   findClaudeModel,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
+  resolveClaudeModelIdentity,
 } from "./models.js";
 import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
@@ -5248,8 +5250,44 @@ function buildClaudePersistedSidechainEvents(
 
 function resolveClaudeHistoricalSubagentTitle(
   toolCall: ClaudeHistoricalSubagentToolCall | undefined,
+  attributionAgent: string | undefined,
 ): string {
-  return toolCall?.name ?? toolCall?.subagentType ?? "Claude subagent";
+  return toolCall?.name ?? toolCall?.subagentType ?? attributionAgent ?? "Claude subagent";
+}
+
+/**
+ * The subagent type as recorded on the sidechain's own entries. The parent tool call is the
+ * better source when it survives, but it is missing whenever the parent transcript no longer
+ * holds the Task block, so this keeps replayed rows titled instead of falling through to the
+ * generic literal.
+ */
+function readClaudeHistoricalAttributionAgent(entries: ClaudeHistoryEntry[]): string | undefined {
+  for (const entry of entries) {
+    const attributionAgent = readNonEmptyString(entry.attributionAgent);
+    if (attributionAgent) {
+      return attributionAgent;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Take the last model the sidechain actually ran on. The live tracker overwrites its model on
+ * every assistant message, so a run that switched models mid-flight ends on the newest one;
+ * replay has to land on the same value or a resumed agent would disagree with what the user
+ * just watched happen.
+ */
+function readClaudeHistoricalSidechainModel(
+  entries: ClaudeHistoryEntry[],
+): ClaudeModelIdentity | null {
+  let identity: ClaudeModelIdentity | null = null;
+  for (const entry of entries) {
+    const candidate = resolveClaudeModelIdentity(readNonEmptyString(entry.message?.model));
+    if (candidate) {
+      identity = candidate;
+    }
+  }
+  return identity;
 }
 
 function buildClaudePersistedSidechainAgentEvents(
@@ -5263,6 +5301,7 @@ function buildClaudePersistedSidechainAgentEvents(
   const id = result?.toolCallId ?? agentId;
   const toolCall = result ? toolCalls.get(result.toolCallId) : undefined;
   const firstTimestamp = normalizeProviderReplayTimestamp(entries[0]?.timestamp);
+  const modelIdentity = readClaudeHistoricalSidechainModel(entries);
   const events: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [
     {
       type: "provider_subagent",
@@ -5270,10 +5309,14 @@ function buildClaudePersistedSidechainAgentEvents(
       event: {
         type: "upsert",
         id,
-        title: resolveClaudeHistoricalSubagentTitle(toolCall),
+        title: resolveClaudeHistoricalSubagentTitle(
+          toolCall,
+          readClaudeHistoricalAttributionAgent(entries),
+        ),
         description: toolCall?.description ?? null,
         status: "running",
         toolCallId: result?.toolCallId ?? null,
+        ...modelIdentity,
         ...(firstTimestamp ? { timestamp: firstTimestamp } : {}),
       },
     },
