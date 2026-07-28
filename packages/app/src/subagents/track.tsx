@@ -213,10 +213,15 @@ function SubagentsTrackRow({
               {displayLabel}
             </Text>
             {modelLabel ? (
-              // No numberOfLines: on web it compiles to a maxWidth clamp that survives
-              // flexShrink: 0, which would make the chip ellipsize itself instead of
-              // holding its width and letting the title absorb the squeeze.
-              <Text style={styles.rowModelLabel} testID={`subagents-track-model-${row.id}`}>
+              // numberOfLines only bites past rowModelLabel's maxWidth: a manifest label is
+              // far shorter than the cap and still holds its full width, while an
+              // unrecognized model's raw id — a Bedrock ARN runs past 80 characters —
+              // ellipsizes instead of squeezing the title out of the row.
+              <Text
+                style={styles.rowModelLabel}
+                numberOfLines={1}
+                testID={`subagents-track-model-${row.id}`}
+              >
                 {modelLabel}
               </Text>
             ) : null}
@@ -408,7 +413,11 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   rowModelLabel: {
+    // flexShrink: 0 keeps a normal label whole and makes the title absorb the squeeze;
+    // maxWidth bounds the pathological case, since an unrecognized model falls back to its
+    // raw id and would otherwise take the row's whole width and overflow it.
     flexShrink: 0,
+    maxWidth: "40%",
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
