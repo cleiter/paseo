@@ -179,28 +179,17 @@ describe("materializeProviderImage", () => {
     expect(isProviderImageMarkdown(item.text)).toBe(true);
   });
 
-  test("sweeps images older than the retention window and keeps fresh ones", () => {
-    const stale = materializeProviderImage({ data: "YWJjMTIz", mimeType: "image/png" });
-    const fresh = materializeProviderImage({ data: "ZGVmNDU2", mimeType: "image/png" });
-
-    const longAgoSeconds = Date.now() / 1000 - 31 * 24 * 60 * 60;
-    utimesSync(stale.path, longAgoSeconds, longAgoSeconds);
-
-    // The sweep runs once per process, on the first image materialized.
-    __resetMaterializedImageAttachmentDirForTests();
-    materializeProviderImage({ data: "Z2hpNzg5", mimeType: "image/png" });
-
-    expect(existsSync(stale.path)).toBe(false);
-    expect(existsSync(fresh.path)).toBe(true);
-  });
-
-  test("re-materializing a stale image keeps it alive", () => {
+  // The whole point of moving out of the temp dir is that nothing deletes these
+  // behind the user's back. An age-based sweep would reintroduce that on a
+  // longer fuse, because mtime cannot tell a referenced image from an abandoned
+  // one and reading a transcript never touches the file.
+  test("keeps images no matter how old they are", () => {
     const image = materializeProviderImage({ data: "YWJjMTIz", mimeType: "image/png" });
-    const longAgoSeconds = Date.now() / 1000 - 31 * 24 * 60 * 60;
+    const longAgoSeconds = Date.now() / 1000 - 365 * 24 * 60 * 60;
     utimesSync(image.path, longAgoSeconds, longAgoSeconds);
 
-    // Rendering it again rewrites the bytes, refreshing mtime before any sweep.
-    materializeProviderImage({ data: "YWJjMTIz", mimeType: "image/png" });
+    // A fresh daemon process materializing an unrelated image: the oldest point
+    // at which a startup sweep would run.
     __resetMaterializedImageAttachmentDirForTests();
     materializeProviderImage({ data: "Z2hpNzg5", mimeType: "image/png" });
 

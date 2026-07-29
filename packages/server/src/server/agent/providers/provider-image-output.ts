@@ -24,15 +24,23 @@ export interface MaterializedProviderImage {
 const PROVIDER_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 const PRIVATE_ATTACHMENT_DIR_MODE = 0o700;
 const MATERIALIZED_IMAGE_FILE_MODE = 0o600;
-// Materialized images used to live in os.tmpdir(), which the OS reaps (macOS
+// Materialized images used to live in os.tmpdir(), which the OS may reap (macOS
 // clears /var/folders after ~3 days). That silently orphaned every image in any
 // transcript older than the reap window: the markdown still pointed at a path
-// whose bytes were gone, and nothing could re-create them. They now live under
-// the paseo home, so this sweep is what bounds the directory instead.
-const MATERIALIZED_IMAGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+// whose bytes were gone, and nothing could re-create them.
+//
+// Nothing deletes these now, deliberately. An age-based sweep here would only
+// move the same bug to a longer fuse — mtime cannot distinguish an image a
+// transcript still references from an abandoned one, and reading a transcript
+// does not touch the file. It would also be a regression on hosts whose temp
+// dir is not reaped on a schedule, where these images currently survive
+// indefinitely. Bounding this directory needs to be reference-aware, against
+// the agent timelines that point into it.
+//
+// Growth is bounded in practice by content addressing: filenames are a hash of
+// the bytes, so re-emitting or replaying an image reuses its existing file.
 
 let materializedImageAttachmentDir: string | null = null;
-let sweptMaterializedImageAttachments = false;
 
 function canReuseMaterializedImageAttachmentDir(dir: string): boolean {
   try {
@@ -44,38 +52,6 @@ function canReuseMaterializedImageAttachmentDir(dir: string): boolean {
     return true;
   } catch {
     return false;
-  }
-}
-
-// Runs once per process, on the first image materialized. Re-materializing an
-// image rewrites it, refreshing mtime, so an image still being rendered keeps
-// itself alive and only genuinely cold ones age out.
-function sweepMaterializedImageAttachments(dir: string): void {
-  if (sweptMaterializedImageAttachments) {
-    return;
-  }
-  sweptMaterializedImageAttachments = true;
-
-  const cutoffMs = Date.now() - MATERIALIZED_IMAGE_MAX_AGE_MS;
-  let entries: fsSync.Dirent[];
-  try {
-    entries = fsSync.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isFile()) {
-      continue;
-    }
-    const filePath = path.join(dir, entry.name);
-    try {
-      if (fsSync.statSync(filePath).mtimeMs < cutoffMs) {
-        fsSync.rmSync(filePath, { force: true });
-      }
-    } catch {
-      // Raced with another writer or already gone. Sweeping is best-effort.
-    }
   }
 }
 
@@ -91,14 +67,12 @@ function getMaterializedImageAttachmentDir(): string {
   fsSync.mkdirSync(dir, { recursive: true, mode: PRIVATE_ATTACHMENT_DIR_MODE });
   fsSync.chmodSync(dir, PRIVATE_ATTACHMENT_DIR_MODE);
   materializedImageAttachmentDir = dir;
-  sweepMaterializedImageAttachments(dir);
   return dir;
 }
 
-/** Test-only hook: the sweep and the resolved directory are process-scoped. */
+/** Test-only hook: the resolved directory is process-scoped. */
 export function __resetMaterializedImageAttachmentDirForTests(): void {
   materializedImageAttachmentDir = null;
-  sweptMaterializedImageAttachments = false;
 }
 
 function getImageExtension(mimeType: string): string {
@@ -134,7 +108,8 @@ function normalizeImageData(mimeType: string, data: string): { mimeType: string;
 // across daemon restarts, so re-materializing the same image reuses the existing
 // file instead of leaking a fresh one for repeated image blocks or history
 // replay. Under the old per-process temp directory this deduplication only held
-// within a single daemon process.
+// within a single daemon process — which is also why this directory does not
+// grow per render, only per distinct image.
 export function materializeProviderImage(image: {
   data: string;
   mimeType: string | null;
