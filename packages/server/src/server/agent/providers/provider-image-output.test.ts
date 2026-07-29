@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, utimesSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -152,8 +152,8 @@ describe("materializeProviderImage", () => {
     // let the OS reap these images out from under the app after ~3 days.
     expect(path.dirname(result.path)).toBe(attachmentsDir());
     expect(path.basename(path.dirname(result.path))).toBe("paseo-attachments");
-    expect(statSync(attachmentsDir()).mode & 0o777).toBe(0o700);
-    expect(statSync(result.path).mode & 0o777).toBe(0o600);
+    // Mode assertions live in the .posix suite: Windows ignores mkdir/writeFile
+    // modes and reports 0o666, so asserting them here fails on that runner.
   });
 
   test("is idempotent for the same bytes across daemon restarts", () => {
