@@ -29,7 +29,7 @@ function project(viewKey: string, ...workspaces: SidebarWorkspacePlacement[]) {
     hosts: [
       {
         serverId: "laptop",
-        projectId: viewKey,
+        projectId: `prj_${viewKey}`,
         iconWorkingDir: `/repos/${viewKey}`,
         worktreeSupport: "supported",
       },

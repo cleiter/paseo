@@ -3,6 +3,7 @@
  */
 import React from "react";
 import { act } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -69,6 +70,23 @@ function setHostProfiles(hosts: HostProfile[]): void {
   ).setHostsAndSync(hosts);
 }
 
+const testQueryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
+
+// The sidebar model reads the replicated sidebar-layout document, which is a React Query
+// resource, so it needs a client in scope — the real tree gets one from _layout.tsx. The
+// subscriber itself never renders the sidebar; it just shares the model that does.
+function renderSubscriber(root: Root | null, enabled: boolean): void {
+  root?.render(
+    <QueryClientProvider client={testQueryClient}>
+      <SidebarModelProvider>
+        <WorkspaceShortcutTargetsSubscriber enabled={enabled} />
+      </SidebarModelProvider>
+    </QueryClientProvider>,
+  );
+}
+
 describe("WorkspaceShortcutTargetsSubscriber", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
@@ -126,11 +144,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
 
   it("publishes workspace shortcut targets without rendering the sidebar", async () => {
     await act(async () => {
-      root?.render(
-        <SidebarModelProvider>
-          <WorkspaceShortcutTargetsSubscriber enabled={true} />
-        </SidebarModelProvider>,
-      );
+      renderSubscriber(root, true);
     });
 
     expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([
@@ -194,11 +208,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
     });
 
     await act(async () => {
-      root?.render(
-        <SidebarModelProvider>
-          <WorkspaceShortcutTargetsSubscriber enabled={true} />
-        </SidebarModelProvider>,
-      );
+      renderSubscriber(root, true);
     });
 
     expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([
@@ -228,11 +238,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
     });
 
     await act(async () => {
-      root?.render(
-        <SidebarModelProvider>
-          <WorkspaceShortcutTargetsSubscriber enabled={true} />
-        </SidebarModelProvider>,
-      );
+      renderSubscriber(root, true);
     });
 
     expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([
@@ -250,19 +256,11 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
 
   it("clears targets when disabled", async () => {
     await act(async () => {
-      root?.render(
-        <SidebarModelProvider>
-          <WorkspaceShortcutTargetsSubscriber enabled={true} />
-        </SidebarModelProvider>,
-      );
+      renderSubscriber(root, true);
     });
 
     await act(async () => {
-      root?.render(
-        <SidebarModelProvider>
-          <WorkspaceShortcutTargetsSubscriber enabled={false} />
-        </SidebarModelProvider>,
-      );
+      renderSubscriber(root, false);
     });
 
     expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([]);
