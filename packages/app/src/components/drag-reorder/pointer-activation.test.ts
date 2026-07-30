@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getDragActivationConstraints } from "./pointer-activation";
+import { DEFAULT_DRAG_ACTIVATION_CONFIG, getDragActivationConstraints } from "./pointer-activation";
 
 const config = { movementDistance: 6, touchHoldDelayMs: 180, touchHoldTolerance: 8 };
 
@@ -17,5 +17,17 @@ describe("getDragActivationConstraints", () => {
 
   it("starts ordinary touch rows after deliberate movement", () => {
     expect(getDragActivationConstraints(false, config).touch).toEqual({ distance: 6 });
+  });
+
+  // The shared default is what both sidebar DndContexts read — DraggableList's own and the
+  // hoisted one that spans a project's groups. When they held separate copies, one kept a
+  // mouse hold delay the other had dropped, and a mouse drag inside a group did nothing.
+  it("never makes a mouse drag wait on a hold", () => {
+    const constraints = getDragActivationConstraints(true, DEFAULT_DRAG_ACTIVATION_CONFIG);
+
+    expect(constraints.mouse).not.toHaveProperty("delay");
+    expect(constraints.mouse).toEqual({
+      distance: DEFAULT_DRAG_ACTIVATION_CONFIG.movementDistance,
+    });
   });
 });

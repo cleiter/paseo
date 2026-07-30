@@ -6,7 +6,8 @@ import {
   MeasuringStrategy,
   closestCenter,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
@@ -31,6 +32,10 @@ import {
 } from "./sidebar-group-drag-shared";
 import { decideDragEnd, decideDragOver } from "./sidebar-group-drag-policy";
 import { SidebarDragOverlaySurface } from "./sidebar-group-sortable";
+import {
+  DEFAULT_DRAG_ACTIVATION_CONFIG,
+  getDragActivationConstraints,
+} from "@/components/drag-reorder";
 
 const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 const DND_MODIFIERS = [restrictToVerticalAxis];
@@ -116,10 +121,18 @@ export function SidebarGroupDragContext({
 }: SidebarGroupDragContextProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
 
-  // Mirrors DraggableList's own handle activation, so grabbing a row inside a group
-  // feels identical to grabbing one in an ungrouped project.
+  // The SAME activation DraggableList uses, from the same constant, because grabbing a row
+  // inside a group has to feel identical to grabbing one in an ungrouped project — and
+  // those two rows are dragged by two different DndContexts.
+  //
+  // Split by input device, not shared: a mouse drag starts on deliberate MOVEMENT, while
+  // touch keeps the hold delay so a drag cannot be mistaken for a scroll. Handing both
+  // sensors one pointer constraint is what broke this before — the mouse inherited the
+  // touch hold, and a click-and-drag inside a group activated nothing.
+  const activationConstraints = getDragActivationConstraints(true, DEFAULT_DRAG_ACTIVATION_CONFIG);
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(MouseSensor, { activationConstraint: activationConstraints.mouse }),
+    useSensor(TouchSensor, { activationConstraint: activationConstraints.touch }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 

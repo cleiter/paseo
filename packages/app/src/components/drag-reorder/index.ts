@@ -1,6 +1,7 @@
 export { reorderItemsOnDragEnd } from "./reorder-items";
 export type { DragEndInput } from "./reorder-items";
 export {
+  DEFAULT_DRAG_ACTIVATION_CONFIG,
   getDragActivationConstraints,
   type DragActivationConfig,
   type DragActivationConstraints,

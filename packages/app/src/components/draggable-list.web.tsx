@@ -18,7 +18,11 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
-import { getDragActivationConstraints, useDragReorderState } from "./drag-reorder";
+import {
+  DEFAULT_DRAG_ACTIVATION_CONFIG,
+  getDragActivationConstraints,
+  useDragReorderState,
+} from "./drag-reorder";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
@@ -28,11 +32,6 @@ const restrictToVerticalAxis: Modifier = ({ transform }) => ({
 });
 
 const DND_MODIFIERS = [restrictToVerticalAxis];
-const DRAG_ACTIVATION_CONFIG = {
-  movementDistance: 6,
-  touchHoldDelayMs: 180,
-  touchHoldTolerance: 8,
-};
 
 interface SortableItemProps<T> {
   id: string;
@@ -187,7 +186,10 @@ export function DraggableList<T>({
     onDragEnd,
     onDragBegin,
   });
-  const activationConstraints = getDragActivationConstraints(useDragHandle, DRAG_ACTIVATION_CONFIG);
+  const activationConstraints = getDragActivationConstraints(
+    useDragHandle,
+    DEFAULT_DRAG_ACTIVATION_CONFIG,
+  );
   // When an ancestor owns the drag, its handlers fire — not ours — so our internal
   // reorder state would never update. Read the live data and the ancestor's activeId
   // instead of the stale internal copy.

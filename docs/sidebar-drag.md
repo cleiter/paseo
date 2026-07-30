@@ -131,6 +131,26 @@ put it:
   publishes its result synchronously to `sidebar-layout-pending.ts` first, and React
   batches that with dnd-kit's own reset.
 
+### 7. Hoisting the context moves the SENSORS too
+
+`SidebarGroupDragContext` owns the `DndContext`, so it also owns the sensors —
+`DraggableList`'s are never constructed for a list that runs on an external context. Which
+means activation is now configured in **two** places for rows that must feel identical, and
+a change to one silently does not reach the other.
+
+That has already happened once. `a7cbf4f61` split activation by input device — mouse on
+movement, touch on a hold, so a mouse drag no longer inherited the touch delay — and
+changed `DraggableList` only. The hoisted context kept a single `PointerSensor` with
+`{ delay: 250 }`, so a click-and-drag in the sidebar activated **nothing at all**: no
+`onDragEnd`, no write, no reorder. The comment above those sensors said "mirrors
+DraggableList's own handle activation," which was true when written and quietly stopped
+being true.
+
+Both now read `DEFAULT_DRAG_ACTIVATION_CONFIG` from `drag-reorder/pointer-activation.ts`
+and build their sensors from `getDragActivationConstraints`. Do not inline the numbers
+again. `e2e/sidebar-reorder.spec.ts` is the guard, and it is upstream's — it drags with a
+7px mouse move and no hold, which is precisely the input a hold delay eats.
+
 ## Invariants a preview must hold
 
 A preview is shown and not saved, so **every** exit from the drag has to account for it, or
