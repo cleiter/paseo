@@ -3,12 +3,13 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { SidebarLayout } from "@getpaseo/protocol/messages";
 import { useReplicaQueries } from "@/data/query";
 import {
-  findStaleHosts,
   pickWinningLayout,
+  planLayoutRepairs,
   sidebarLayoutQueryKey,
   type HostLayoutEntry,
 } from "@/data/sidebar-layout";
 import {
+  clearPendingSidebarLayout,
   getPendingSidebarLayout,
   resolvePendingLayout,
   setPendingSidebarLayout,
@@ -230,35 +231,38 @@ export function useSidebarLayout(): SidebarLayoutController {
   // Measured against CONFIRMED, never against the optimistic layout: an in-flight edit is
   // ahead of every host by definition, so using it here would mark them all stale and
   // race a second write against the one already on the wire.
-  const staleServerIds = useMemo(() => findStaleHosts(entries, confirmed), [entries, confirmed]);
-  const staleKey = staleServerIds.join(",");
+  const repairs = useMemo(() => planLayoutRepairs(entries, confirmed), [entries, confirmed]);
+  // Collapses the plan to a value, so a re-render that would re-issue the SAME heal does
+  // not. The target revision is in the key because a same-revision divergence repairs to
+  // confirmed.revision + 1 — without it, two rounds of healing the same host would look
+  // identical and the second would be skipped.
+  const repairKey = repairs
+    .map((repair) => `${repair.serverId}@${repair.expectedRevision}->${repair.layout.revision}`)
+    .join(",");
   useEffect(() => {
-    if (staleServerIds.length === 0) {
+    if (repairs.length === 0) {
       return;
     }
     const store = getHostRuntimeStore();
-    for (const serverId of staleServerIds) {
-      const client = store.getSnapshot(serverId)?.client;
+    for (const repair of repairs) {
+      const client = store.getSnapshot(repair.serverId)?.client;
       if (!client) {
         continue;
       }
-      const behind = entries.find((entry) => entry.serverId === serverId);
       void (async () => {
         try {
           const result = await client.setSidebarLayout({
-            layout: confirmed,
-            expectedRevision: behind?.layout?.revision ?? 0,
+            layout: repair.layout,
+            expectedRevision: repair.expectedRevision,
           });
-          queryClient.setQueryData(sidebarLayoutQueryKey(serverId), result.layout);
+          queryClient.setQueryData(sidebarLayoutQueryKey(repair.serverId), result.layout);
         } catch {
           // Best effort. It stays behind, and the next read tries again.
         }
       })();
     }
-    // `staleKey` collapses the array identity so a re-render with the same stale hosts
-    // does not re-issue the same heal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [staleKey, confirmed.revision, queryClient]);
+  }, [repairKey, queryClient]);
 
   const edit = useCallback(
     (recipe: (layout: SidebarLayout) => SidebarLayout) => {
@@ -274,7 +278,7 @@ export function useSidebarLayout(): SidebarLayoutController {
         recipe,
         includePreview: true,
       });
-      setPendingSidebarLayout(next);
+      const ownedToken = setPendingSidebarLayout(next);
 
       void commitLayout({
         queryClient,
@@ -285,7 +289,11 @@ export function useSidebarLayout(): SidebarLayoutController {
         // The confirmed document is authoritative from here. If the write failed, this is
         // what puts the sidebar back to what the hosts actually hold rather than leaving
         // it showing an order nobody stored.
-        setPendingSidebarLayout(null);
+        //
+        // Only if this edit still owns the pending layout, though. Writes settle in
+        // whatever order the network returns them, and clearing unconditionally let a
+        // slow first edit wipe a fast second one's optimistic state mid-flight.
+        clearPendingSidebarLayout(ownedToken);
       });
     },
     [activeServerIds, queryClient],

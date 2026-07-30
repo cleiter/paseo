@@ -65,16 +65,80 @@ export function pickWinningLayout(entries: readonly HostLayoutEntry[]): SidebarL
   return winner?.layout ?? EMPTY_SIDEBAR_LAYOUT;
 }
 
-// Hosts that are behind the winner. They are not broken — they were most likely just
-// offline while the user edited elsewhere. Pushing the winning document at its own
-// revision lands them exactly on it.
-export function findStaleHosts(
+// A stable identity for a document's CONTENT, used to tell "the same document" from "a
+// different document that happens to share a revision".
+//
+// Spelled out field by field rather than JSON.stringify'd whole: the arrays are
+// order-sensitive on purpose (array order IS the sidebar's order, so a reorder must read
+// as a difference), while the by-project record is not (two hosts can serialize the same
+// map with its keys in either order, and that is not a divergence). Stringifying the
+// document would conflate the two and report a phantom difference forever.
+function layoutFingerprint(layout: SidebarLayout): string {
+  return JSON.stringify([
+    layout.revision,
+    layout.updatedAt,
+    layout.projectGroups.map((group) => [group.id, group.name, group.projectKeys]),
+    layout.workspaceGroups.map((group) => [
+      group.id,
+      group.name,
+      group.projectKey,
+      group.workspaceKeys,
+    ]),
+    layout.ungroupedProjectKeys,
+    Object.keys(layout.ungroupedWorkspaceKeysByProject)
+      .sort()
+      .map((projectKey) => [projectKey, layout.ungroupedWorkspaceKeysByProject[projectKey]]),
+    layout.pinnedWorkspaceKeys,
+  ]);
+}
+
+export interface SidebarLayoutRepair {
+  serverId: string;
+  layout: SidebarLayout;
+  // What the host is believed to hold. The daemon refuses a write based on a stale read,
+  // so this is what proves the repair is not one.
+  expectedRevision: number;
+}
+
+// The writes that bring every host onto the winning document.
+//
+// The ordinary case is a host that was simply offline while the user edited elsewhere: it
+// is strictly behind, and pushing the winner at its own revision lands it exactly on it.
+//
+// The case that needs care is two hosts on the SAME revision with different content. The
+// revision travels with the content and is assigned by the client, so two daemons that
+// were edited while they could not see each other both arrive at N+1 holding different
+// documents. `pickWinningLayout` chooses between them — every device the same way — but
+// choosing is not healing, and the loser is not "behind" by revision, so it would sit
+// there diverged forever. Worse, the winner cannot simply be pushed at its own revision:
+// the daemon rejects any write that does not MOVE the document forward, so the repair
+// would be refused as stale and the two would never converge.
+//
+// So a same-revision divergence republishes the winner one revision ahead, to everyone.
+// That puts every host — the winner's own included — strictly behind a single new target,
+// and one pass converges them. `updatedAt` is deliberately carried over rather than
+// restamped: two devices repairing the same divergence must produce byte-identical
+// documents, or the repair is itself a new divergence.
+export function planLayoutRepairs(
   entries: readonly HostLayoutEntry[],
   winner: SidebarLayout,
-): string[] {
+): SidebarLayoutRepair[] {
+  const winnerFingerprint = layoutFingerprint(winner);
+  const hasDivergence = entries.some(
+    (entry) =>
+      entry.layout &&
+      entry.layout.revision === winner.revision &&
+      layoutFingerprint(entry.layout) !== winnerFingerprint,
+  );
+  const target = hasDivergence ? { ...winner, revision: winner.revision + 1 } : winner;
+
   return entries
-    .filter((entry) => (entry.layout?.revision ?? 0) < winner.revision)
-    .map((entry) => entry.serverId);
+    .filter((entry) => (entry.layout?.revision ?? 0) < target.revision)
+    .map((entry) => ({
+      serverId: entry.serverId,
+      layout: target,
+      expectedRevision: entry.layout?.revision ?? 0,
+    }));
 }
 
 export function isSidebarLayoutEmpty(layout: SidebarLayout): boolean {

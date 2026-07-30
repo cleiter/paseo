@@ -15,13 +15,38 @@ import type { SidebarLayout } from "@getpaseo/protocol/messages";
 // useWorkspaceStructure. Component state in one would not be seen by the other.
 
 let pending: SidebarLayout | null = null;
+// Bumped on every write. An edit holds the token it was given and may only clear the
+// pending layout while that token is still current — see clearPendingSidebarLayout.
+let token = 0;
 const listeners = new Set<() => void>();
 
-export function setPendingSidebarLayout(layout: SidebarLayout | null): void {
+export function setPendingSidebarLayout(layout: SidebarLayout | null): number {
   pending = layout;
+  token += 1;
   for (const listener of listeners) {
     listener();
   }
+  return token;
+}
+
+// Clears the pending layout only if it is still the one `token` was issued for.
+//
+// An edit clears the optimistic layout when its write settles, and the write is async, so
+// a second edit (or a drag preview) can easily start first and settle second. Clearing
+// unconditionally meant the FIRST edit's completion wiped the SECOND one's optimistic
+// state while its write was still on the wire: the sidebar dropped back to the confirmed
+// document, showing the newer change undone, until that write landed and put it back. A
+// visible snapback, on the happy path, caused entirely by whose round trip finished first.
+//
+// Ownership is per-write rather than per-hook because the pending layout is module state:
+// two components calling useSidebarLayout share it, so a ref inside the hook would not
+// see the other's edit at all.
+export function clearPendingSidebarLayout(ownedToken: number): void {
+  if (ownedToken !== token) {
+    // A newer edit or preview owns the pending layout now. It will clear its own.
+    return;
+  }
+  setPendingSidebarLayout(null);
 }
 
 export function getPendingSidebarLayout(): SidebarLayout | null {

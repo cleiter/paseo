@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SidebarLayout } from "@getpaseo/protocol/messages";
-import { EMPTY_SIDEBAR_LAYOUT, pickWinningLayout } from "@/data/sidebar-layout";
+import { EMPTY_SIDEBAR_LAYOUT, pickWinningLayout, planLayoutRepairs } from "@/data/sidebar-layout";
 import { resolvePendingLayout } from "@/data/sidebar-layout-pending";
 import {
   createProjectGroup,
@@ -326,6 +326,131 @@ describe("pickWinningLayout", () => {
 
     expect(pickWinningLayout(entries).updatedAt).toBe("2026-07-14T12:00:00.000Z");
     expect(pickWinningLayout(entries.toReversed()).updatedAt).toBe("2026-07-14T12:00:00.000Z");
+  });
+});
+
+describe("planLayoutRepairs", () => {
+  it("catches a host up at the winner's own revision", () => {
+    const winner = layout({ revision: 5 });
+    const repairs = planLayoutRepairs(
+      [
+        { serverId: "a", layout: winner },
+        { serverId: "b", layout: layout({ revision: 2 }) },
+      ],
+      winner,
+    );
+
+    expect(repairs).toEqual([{ serverId: "b", layout: winner, expectedRevision: 2 }]);
+  });
+
+  it("leaves hosts alone when every one of them already holds the winner", () => {
+    const winner = layout({ revision: 5 });
+
+    expect(
+      planLayoutRepairs(
+        [
+          { serverId: "a", layout: winner },
+          { serverId: "b", layout: { ...winner } },
+        ],
+        winner,
+      ),
+    ).toEqual([]);
+  });
+
+  it("republishes one revision ahead when two hosts diverged at the SAME revision", () => {
+    // The failure this exists for: the client assigns the revision, so two daemons edited
+    // while they could not see each other both land on 4 holding different documents.
+    // pickWinningLayout chooses between them, but choosing is not healing — the loser is
+    // not BEHIND, so a revision comparison alone never repairs it, and the daemon refuses
+    // a write that does not move the document forward, so pushing the winner at 4 would be
+    // rejected as stale. They would sit diverged until the user happened to edit again.
+    const winner = layout({
+      revision: 4,
+      updatedAt: "2026-07-14T12:00:00.000Z",
+      ungroupedProjectKeys: ["paseo", "other"],
+    });
+    const loser = layout({
+      revision: 4,
+      updatedAt: "2026-07-14T10:00:00.000Z",
+      ungroupedProjectKeys: ["other", "paseo"],
+    });
+
+    const repairs = planLayoutRepairs(
+      [
+        { serverId: "a", layout: winner },
+        { serverId: "b", layout: loser },
+      ],
+      winner,
+    );
+
+    // Every host, the winner's own included, is now strictly behind ONE new target, so a
+    // single pass converges them.
+    expect(repairs.map((repair) => [repair.serverId, repair.expectedRevision])).toEqual([
+      ["a", 4],
+      ["b", 4],
+    ]);
+    expect(repairs.every((repair) => repair.layout.revision === 5)).toBe(true);
+    expect(
+      repairs.every((repair) => repair.layout.ungroupedProjectKeys === winner.ungroupedProjectKeys),
+    ).toBe(true);
+  });
+
+  it("carries the winner's updatedAt into the republish rather than restamping it", () => {
+    // Two devices can be repairing the same divergence at the same moment. If each
+    // stamped its own time, they would produce two DIFFERENT documents at revision 5 —
+    // the repair would be a fresh divergence, and it would never settle.
+    const winner = layout({
+      revision: 4,
+      updatedAt: "2026-07-14T12:00:00.000Z",
+      ungroupedProjectKeys: ["paseo"],
+    });
+    const loser = layout({ revision: 4, updatedAt: "2026-07-14T10:00:00.000Z" });
+
+    const repairs = planLayoutRepairs(
+      [
+        { serverId: "a", layout: winner },
+        { serverId: "b", layout: loser },
+      ],
+      winner,
+    );
+
+    expect(repairs[0]?.layout.updatedAt).toBe("2026-07-14T12:00:00.000Z");
+  });
+
+  it("does not mistake key order in the by-project record for a divergence", () => {
+    // Array order IS the sidebar's order, so a reordered array is a real difference. The
+    // by-project RECORD has no order — two hosts can serialize the same map either way,
+    // and treating that as divergence would republish forever.
+    const winner = layout({
+      revision: 3,
+      ungroupedWorkspaceKeysByProject: { paseo: ["a"], other: ["b"] },
+    });
+    const sameContent = layout({
+      revision: 3,
+      ungroupedWorkspaceKeysByProject: { other: ["b"], paseo: ["a"] },
+    });
+
+    expect(
+      planLayoutRepairs(
+        [
+          { serverId: "a", layout: winner },
+          { serverId: "b", layout: sameContent },
+        ],
+        winner,
+      ),
+    ).toEqual([]);
+  });
+
+  it("plans nothing when no device has ever written a layout", () => {
+    expect(
+      planLayoutRepairs(
+        [
+          { serverId: "a", layout: null },
+          { serverId: "b", layout: null },
+        ],
+        EMPTY_SIDEBAR_LAYOUT,
+      ),
+    ).toEqual([]);
   });
 });
 

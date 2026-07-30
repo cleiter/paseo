@@ -1875,7 +1875,7 @@ function ProjectBlock({
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
   supportsPinningByServerId,
-  supportsGroupingByServerId,
+  isLayoutAvailable,
   onToggleWorkspacePin,
   onWorkspaceGroupReorder,
   onRenameGroup,
@@ -1923,7 +1923,9 @@ function ProjectBlock({
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
-  supportsGroupingByServerId: ReadonlyMap<string, boolean>;
+  // Whether ANY connected host can store the layout document. Grouping is one write to
+  // one replicated document, so that is the whole question — see the row gate below.
+  isLayoutAvailable: boolean;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
   const {
@@ -1973,16 +1975,6 @@ function ProjectBlock({
     return byKey;
   }, [project.workspaceGroups]);
 
-  // A project can span hosts and the write is fanned out to all of them, so grouping
-  // is only offered when EVERY host can take it — matching the readiness gate that
-  // would otherwise reject the write.
-  const canGroupProject = useMemo(
-    () =>
-      project.hosts.length > 0 &&
-      project.hosts.every((host) => supportsGroupingByServerId.get(host.serverId) === true),
-    [project.hosts, supportsGroupingByServerId],
-  );
-
   const [isNewProjectGroupOpen, setIsNewProjectGroupOpen] = useState(false);
   const [isNewWorkspaceGroupOpen, setIsNewWorkspaceGroupOpen] = useState(false);
   const { createWorkspaceGroup } = useGroupActions();
@@ -2024,7 +2016,7 @@ function ProjectBlock({
 
   const groupMenu = useMemo<ProjectGroupMenu | undefined>(
     () =>
-      canGroupProject
+      isLayoutAvailable
         ? {
             availableGroups: availableProjectGroups,
             currentGroupId: project.projectGroup?.groupId ?? null,
@@ -2034,7 +2026,7 @@ function ProjectBlock({
           }
         : undefined,
     [
-      canGroupProject,
+      isLayoutAvailable,
       availableProjectGroups,
       project.projectGroup,
       handleMoveProjectToGroup,
@@ -2067,7 +2059,7 @@ function ProjectBlock({
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={project.projectKind === "git"}
           canPin={supportsPinningByServerId.get(item.serverId) === true}
-          canGroup={supportsGroupingByServerId.get(item.serverId) === true}
+          canGroup={isLayoutAvailable}
           availableGroups={projectGroupRefs}
           currentGroupId={groupIdByWorkspaceKey.get(item.workspaceKey) ?? null}
           onToggleWorkspacePin={onToggleWorkspacePin}
@@ -2085,7 +2077,7 @@ function ProjectBlock({
       project.projectKind,
       onToggleWorkspacePin,
       supportsPinningByServerId,
-      supportsGroupingByServerId,
+      isLayoutAvailable,
       projectGroupRefs,
       groupIdByWorkspaceKey,
       activeWorkspaceSelection,
@@ -2332,7 +2324,7 @@ function ProjectBlock({
     >
       <ProjectHeaderRow
         groupMenu={groupMenu}
-        onNewWorkspaceGroup={canGroupProject ? handleOpenNewWorkspaceGroup : undefined}
+        onNewWorkspaceGroup={isLayoutAvailable ? handleOpenNewWorkspaceGroup : undefined}
         project={project}
         displayName={displayName}
         iconDataUri={iconDataUri}
@@ -2400,7 +2392,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.hostBadgeByServerId === next.hostBadgeByServerId &&
     previous.supportsMultiplicityByServerId === next.supportsMultiplicityByServerId &&
     previous.supportsPinningByServerId === next.supportsPinningByServerId &&
-    previous.supportsGroupingByServerId === next.supportsGroupingByServerId &&
+    previous.isLayoutAvailable === next.isLayoutAvailable &&
     previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
     previous.parentGestureRef === next.parentGestureRef &&
     previous.onToggleCollapsed === next.onToggleCollapsed &&
@@ -2485,7 +2477,6 @@ export function SidebarWorkspaceList({
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
   const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
-  const supportsGroupingByServerId = useHostFeatureMap(serverIds, "sidebarLayout");
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   // Status mode drops the project grouping, so its rows carry their own project
   // icon. Project mode fetches the same icons inside ProjectModeList for its
@@ -2530,7 +2521,6 @@ export function SidebarWorkspaceList({
         hostBadgeByServerId={hostBadgeByServerId}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
         supportsPinningByServerId={supportsPinningByServerId}
-        supportsGroupingByServerId={supportsGroupingByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
       />
     );
@@ -2586,7 +2576,6 @@ function ProjectModeList({
   projects,
   pinnedGroups,
   workspaceEntriesByKey,
-  supportsGroupingByServerId,
   collapsedProjectKeys,
   onToggleProjectCollapsed,
   shortcutIndexByWorkspaceKey,
@@ -2607,7 +2596,6 @@ function ProjectModeList({
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
-  supportsGroupingByServerId: ReadonlyMap<string, boolean>;
 }) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const { t } = useTranslation();
@@ -3099,7 +3087,7 @@ function ProjectModeList({
           hostBadgeByServerId={hostBadgeByServerId}
           supportsMultiplicityByServerId={supportsMultiplicityByServerId}
           supportsPinningByServerId={supportsPinningByServerId}
-          supportsGroupingByServerId={supportsGroupingByServerId}
+          isLayoutAvailable={isLayoutAvailable}
           onToggleWorkspacePin={onToggleWorkspacePin}
         />
       );
@@ -3121,7 +3109,7 @@ function ProjectModeList({
       hostBadgeByServerId,
       supportsMultiplicityByServerId,
       supportsPinningByServerId,
-      supportsGroupingByServerId,
+      isLayoutAvailable,
       onToggleWorkspacePin,
       onWorkspacePress,
       onToggleProjectCollapsed,
