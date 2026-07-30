@@ -8,6 +8,7 @@ import {
   sidebarLayoutQueryKey,
   type HostLayoutEntry,
 } from "@/data/sidebar-layout";
+import { enqueueSidebarLayoutCommit } from "@/data/sidebar-layout-commit-queue";
 import {
   clearPendingSidebarLayout,
   getPendingSidebarLayout,
@@ -280,12 +281,19 @@ export function useSidebarLayout(): SidebarLayoutController {
       });
       const ownedToken = setPendingSidebarLayout(next);
 
-      void commitLayout({
-        queryClient,
-        serverIds: activeServerIds,
-        layout: next,
-        recipe,
-      }).finally(() => {
+      // Queued behind any write still in flight. The daemon would refuse a second
+      // concurrent write as stale — see sidebar-layout-commit-queue.ts — so overlapping
+      // edits burned retries on a conflict that only existed because both were on the wire
+      // at once. `next` is already correct for its place in the queue: it was built on the
+      // pending layout, which is the result of the edit ahead of it.
+      void enqueueSidebarLayoutCommit(() =>
+        commitLayout({
+          queryClient,
+          serverIds: activeServerIds,
+          layout: next,
+          recipe,
+        }),
+      ).finally(() => {
         // The confirmed document is authoritative from here. If the write failed, this is
         // what puts the sidebar back to what the hosts actually hold rather than leaving
         // it showing an order nobody stored.

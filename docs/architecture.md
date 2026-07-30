@@ -219,6 +219,10 @@ Every physical send path enforces an 8 MiB outbound high-water mark, including J
 
 Client session RPC waits default to 60s so slow relay or mobile networks do not turn a live but delayed daemon response into a false operation failure. Keep connect timeouts, app-level grace windows, explicit diagnostic latency probes, liveness ping timers, and genuinely long-running RPCs separate from this default.
 
+**Inbound session messages are handled concurrently, not one at a time.** The socket's `message` listener dispatches `handleMessage` without awaiting it, so a handler that awaits anything — a disk write, a subprocess — is still in flight when the next message is dispatched. That is fine for independent operations and a trap for **optimistic concurrency**: a store that awaits its persist before assigning the new revision will refuse a second write that arrived in that window as stale, even though its `expectedRevision` was exactly right for the write ahead of it. The client cannot tell that false conflict from a real one, so it re-applies and burns a retry, and a client with a bounded attempt count can drop an edit outright.
+
+Two writes to one revisioned document therefore must not be in the air at once. Serialize them on the **client**, where the ordering is known — see `sidebar-layout-commit-queue.ts` for the sidebar layout's. Do not serialize the whole socket to fix it, and do not raise the retry ceiling: retries recover a conflict, they do not prevent one.
+
 New session RPCs use dotted names with `.request` and `.response` suffixes, such as `checkout.forge.set_auto_merge.request` and `checkout.forge.set_auto_merge.response`. See [rpc-namespacing.md](rpc-namespacing.md) for the convention and migration rules for older flat RPC names.
 
 **Notable session message types:**
