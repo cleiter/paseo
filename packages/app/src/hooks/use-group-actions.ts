@@ -1,6 +1,9 @@
 import { useMemo } from "react";
 import { useSidebarLayout } from "@/hooks/use-sidebar-layout";
+import type { SidebarLayout } from "@getpaseo/protocol/messages";
 import {
+  adoptVisibleProjectKeys,
+  adoptVisibleWorkspaceKeys,
   createGroupId,
   createProjectGroup,
   createWorkspaceGroup,
@@ -58,12 +61,17 @@ export interface GroupActions {
     projectKey: string;
     groupId: string | null;
     beforeKey?: string | null;
+    // The target list AS DRAWN. A drop positions one row against another, which is index
+    // arithmetic over the stored list — so the document has to know both rows first. See
+    // adoptVisibleProjectKeys.
+    visibleKeys?: readonly string[];
   }) => void;
   reorderProjectGroups: (orderedIds: string[]) => void;
   previewProjectMove: (input: {
     projectKey: string;
     groupId: string | null;
     beforeKey?: string | null;
+    visibleKeys?: readonly string[];
   }) => void;
   // A drag hands back the rows it reordered — only the VISIBLE ones, since a long list is
   // capped behind "show more". The edit merges them into the group's stored order, so the
@@ -78,6 +86,7 @@ export interface GroupActions {
     workspaceKey: string;
     groupId: string | null;
     beforeKey?: string | null;
+    visibleKeys?: readonly string[];
   }) => void;
   reorderWorkspaceGroups: (input: { projectKey: string; orderedIds: string[] }) => void;
   // Shows the move without saving it, so the target group's list opens a gap under the
@@ -87,6 +96,7 @@ export interface GroupActions {
     workspaceKey: string;
     groupId: string | null;
     beforeKey?: string | null;
+    visibleKeys?: readonly string[];
   }) => void;
   // One cancel for both levels: only one drag can be in flight.
   cancelMovePreview: () => void;
@@ -100,6 +110,37 @@ export interface GroupActions {
   // have inside their groups. Takes what is on SCREEN; the edit merges it into the stored
   // order so pins from a host that is currently offline keep their slots.
   setPinnedWorkspaceOrder: (orderedVisibleKeys: string[]) => void;
+}
+
+// A move is positional, so it runs against a document that already knows every row the
+// user can see in the target list. Callers that have that list hand it over; the ones that
+// do not — the row menus, which name a group rather than a position — pass nothing and get
+// the document unchanged.
+function withAdoptedProjects(
+  layout: SidebarLayout,
+  input: { groupId: string | null; visibleKeys?: readonly string[] },
+): SidebarLayout {
+  if (!input.visibleKeys) {
+    return layout;
+  }
+  return adoptVisibleProjectKeys(layout, {
+    groupId: input.groupId,
+    visibleKeys: input.visibleKeys,
+  });
+}
+
+function withAdoptedWorkspaces(
+  layout: SidebarLayout,
+  input: { projectKey: string; groupId: string | null; visibleKeys?: readonly string[] },
+): SidebarLayout {
+  if (!input.visibleKeys) {
+    return layout;
+  }
+  return adoptVisibleWorkspaceKeys(layout, {
+    projectKey: input.projectKey,
+    groupId: input.groupId,
+    visibleKeys: input.visibleKeys,
+  });
 }
 
 export function useGroupActions(): GroupActions {
@@ -164,7 +205,7 @@ export function useGroupActions(): GroupActions {
         edit((layout) => deleteProjectGroup(layout, groupId));
       },
       moveProjectToGroup: (input) => {
-        edit((layout) => moveProjectToGroup(layout, input));
+        edit((layout) => moveProjectToGroup(withAdoptedProjects(layout, input), input));
       },
       reorderProjectGroups: (orderedIds) => {
         edit((layout) => reorderProjectGroups(layout, orderedIds));
@@ -173,7 +214,7 @@ export function useGroupActions(): GroupActions {
         edit((layout) => reorderProjectsInGroup(layout, input));
       },
       previewProjectMove: (input) => {
-        preview((layout) => moveProjectToGroup(layout, input));
+        preview((layout) => moveProjectToGroup(withAdoptedProjects(layout, input), input));
       },
 
       createWorkspaceGroup: ({ projectKey, name }) => {
@@ -188,7 +229,7 @@ export function useGroupActions(): GroupActions {
         edit((layout) => deleteWorkspaceGroup(layout, groupId));
       },
       moveWorkspaceToGroup: (input) => {
-        edit((layout) => moveWorkspaceToGroup(layout, input));
+        edit((layout) => moveWorkspaceToGroup(withAdoptedWorkspaces(layout, input), input));
       },
       reorderWorkspaceGroups: (input) => {
         edit((layout) => reorderWorkspaceGroups(layout, input));
@@ -197,7 +238,7 @@ export function useGroupActions(): GroupActions {
         edit((layout) => reorderWorkspacesInGroup(layout, input));
       },
       previewWorkspaceMove: (input) => {
-        preview((layout) => moveWorkspaceToGroup(layout, input));
+        preview((layout) => moveWorkspaceToGroup(withAdoptedWorkspaces(layout, input), input));
       },
       setPinnedWorkspaceOrder: (orderedVisibleKeys) => {
         edit((layout) => setPinnedWorkspaceOrder(layout, { orderedVisibleKeys }));

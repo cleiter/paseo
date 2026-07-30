@@ -197,6 +197,38 @@ resolves, the layout genuinely is revision 0 and the sidebar renders ungrouped f
 If that flash ever needs fixing, fix it by distinguishing "not loaded yet" from "empty",
 not by special-casing groups.
 
+### A row the document has never seen cannot be positioned
+
+Same symptom again — the row snaps back — and a third distinct cause, so check this one
+before reaching for the two above.
+
+The document holds only the rows some device has **written** into it. A project added since
+the last layout edit is not in it, and neither is a workspace created an hour ago. Both
+still render: `applyStoredOrdering` leaves keys it does not recognise exactly where it found
+them, so the sidebar looks complete while the document is not.
+
+A drop names the row it landed on, and turning that into a new order is index arithmetic
+over the **stored** list. So two rows the document does not know cannot be ordered against
+each other at all: `dropIntoList` finds neither index, falls back to "append", and the
+projection then prunes the half it cannot place. Nothing moves. This is not an edge case —
+it is every new project on a machine where anything has ever been grouped, and it is what
+made `e2e/sidebar-reorder.spec.ts` fail in a shard (65th test, document already written by
+earlier tests) while passing when run alone (empty document, seeded from the local order).
+
+So a positional edit **adopts the visible list first**: `adoptVisibleProjectKeys` /
+`adoptVisibleWorkspaceKeys` splice each missing on-screen row in beside the row it is drawn
+beside, and the move runs against that. Two properties are load-bearing:
+
+- **Splice, do not overwrite.** Keys the document holds that are not on screen belong to a
+  host that is offline right now. Replacing the list with what is visible deletes their
+  order — and the whole point of retaining unresolvable keys is that a multi-daemon layout
+  survives being viewed from a machine that sees half of it.
+- **Adopt only into the target list.** A key the document already files under another group
+  is known, just not here; adopting it would put one project in two groups.
+
+The row menus pass no visible list and get the document untouched, which is correct: they
+name a group, not a position.
+
 ## Testing
 
 - `sidebar-group-drag-policy.test.ts` — one case per bug that shipped, each named for the

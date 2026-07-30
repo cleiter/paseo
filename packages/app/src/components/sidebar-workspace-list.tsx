@@ -1851,6 +1851,38 @@ function WorkspaceRow({
   );
 }
 
+// One list, exactly as the sidebar draws it. A drop is positional, and the document can
+// only position rows it already knows — a project or workspace created since the last
+// layout write is not in it, so the drop has nothing to measure against and the row snaps
+// back. Handing the drawn list over is what lets the edit adopt those rows first.
+function visibleWorkspaceKeys(
+  project: GroupedSidebarProject,
+  groupId: string | null,
+): readonly string[] {
+  if (groupId === null) {
+    return project.ungroupedWorkspaces.map((workspace) => workspace.workspaceKey);
+  }
+  return (
+    project.workspaceGroups
+      .find((group) => group.groupId === groupId)
+      ?.workspaces.map((workspace) => workspace.workspaceKey) ?? []
+  );
+}
+
+function visibleProjectKeys(
+  grouped: { projectGroups: SidebarProjectGroup[]; ungroupedProjects: GroupedSidebarProject[] },
+  groupId: string | null,
+): readonly string[] {
+  if (groupId === null) {
+    return grouped.ungroupedProjects.map((project) => project.viewKey);
+  }
+  return (
+    grouped.projectGroups
+      .find((group) => group.groupId === groupId)
+      ?.projects.map((project) => project.viewKey) ?? []
+  );
+}
+
 function ProjectBlock({
   project,
   workspaceEntriesByKey,
@@ -1890,8 +1922,16 @@ function ProjectBlock({
   project: GroupedSidebarProject;
   availableProjectGroups: SidebarGroupRef[];
   onSetProjectGroup: (project: GroupedSidebarProject, assignment: GroupAssignment) => void;
-  onWorkspaceGroupDrop: (projectKey: string, event: SidebarGroupDropEvent) => void;
-  onWorkspaceGroupDragPreview: (projectKey: string, event: SidebarGroupDropEvent) => void;
+  onWorkspaceGroupDrop: (
+    projectKey: string,
+    event: SidebarGroupDropEvent,
+    visibleKeys: readonly string[],
+  ) => void;
+  onWorkspaceGroupDragPreview: (
+    projectKey: string,
+    event: SidebarGroupDropEvent,
+    visibleKeys: readonly string[],
+  ) => void;
   onWorkspaceGroupDragPreviewCancel: () => void;
   onWorkspaceGroupsReorder: (projectKey: string, orderedGroupIds: string[]) => void;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -2187,9 +2227,9 @@ function ProjectBlock({
   // target list at the target position is the whole operation.
   const handleGroupDrop = useCallback(
     (event: SidebarGroupDropEvent) => {
-      onWorkspaceGroupDrop(project.viewKey, event);
+      onWorkspaceGroupDrop(project.viewKey, event, visibleWorkspaceKeys(project, event.toGroupId));
     },
-    [onWorkspaceGroupDrop, project.viewKey],
+    [onWorkspaceGroupDrop, project],
   );
 
   const handleGroupsReorder = useCallback(
@@ -2201,9 +2241,13 @@ function ProjectBlock({
 
   const handleGroupDragPreview = useCallback(
     (event: SidebarGroupDropEvent) => {
-      onWorkspaceGroupDragPreview(project.viewKey, event);
+      onWorkspaceGroupDragPreview(
+        project.viewKey,
+        event,
+        visibleWorkspaceKeys(project, event.toGroupId),
+      );
     },
-    [onWorkspaceGroupDragPreview, project.viewKey],
+    [onWorkspaceGroupDragPreview, project],
   );
 
   const workspaceGroupIds = useMemo(
@@ -2797,12 +2841,13 @@ function ProjectModeList({
   // fill an empty group, since it has no rows to drop between. A null overWorkspaceKey
   // means "no position was named", so it lands at the end.
   const handleWorkspaceGroupDrop = useCallback(
-    (projectKey: string, event: SidebarGroupDropEvent) => {
+    (projectKey: string, event: SidebarGroupDropEvent, visibleKeys: readonly string[]) => {
       moveWorkspaceToGroup({
         projectKey,
         workspaceKey: event.itemKey,
         groupId: event.toGroupId,
         beforeKey: event.overItemKey,
+        visibleKeys,
       });
     },
     [moveWorkspaceToGroup],
@@ -2817,12 +2862,13 @@ function ProjectModeList({
 
   // Shown, not saved. The drop commits it; abandoning the drag throws it away.
   const handleWorkspaceGroupDragPreview = useCallback(
-    (projectKey: string, event: SidebarGroupDropEvent) => {
+    (projectKey: string, event: SidebarGroupDropEvent, visibleKeys: readonly string[]) => {
       previewWorkspaceMove({
         projectKey,
         workspaceKey: event.itemKey,
         groupId: event.toGroupId,
         beforeKey: event.overItemKey,
+        visibleKeys,
       });
     },
     [previewWorkspaceMove],
@@ -3143,9 +3189,10 @@ function ProjectModeList({
         projectKey: event.itemKey,
         groupId: event.toGroupId,
         beforeKey: event.overItemKey,
+        visibleKeys: visibleProjectKeys(groupedSidebar, event.toGroupId),
       });
     },
-    [moveProjectToGroup],
+    [moveProjectToGroup, groupedSidebar],
   );
 
   // Shown, not saved: opens the gap in the group under the cursor. The drop commits it.
@@ -3155,9 +3202,10 @@ function ProjectModeList({
         projectKey: event.itemKey,
         groupId: event.toGroupId,
         beforeKey: event.overItemKey,
+        visibleKeys: visibleProjectKeys(groupedSidebar, event.toGroupId),
       });
     },
-    [previewProjectMove],
+    [previewProjectMove, groupedSidebar],
   );
 
   // The row that follows the cursor. Same renderer the list uses, so what is under the

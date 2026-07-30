@@ -3,6 +3,8 @@ import type { SidebarLayout } from "@getpaseo/protocol/messages";
 import { EMPTY_SIDEBAR_LAYOUT, pickWinningLayout, planLayoutRepairs } from "@/data/sidebar-layout";
 import { resolvePendingLayout } from "@/data/sidebar-layout-pending";
 import {
+  adoptVisibleProjectKeys,
+  adoptVisibleWorkspaceKeys,
   createProjectGroup,
   createWorkspaceGroup,
   deleteProjectGroup,
@@ -579,5 +581,101 @@ describe("pinned workspace order", () => {
     });
 
     expect(next.ungroupedProjectKeys).toEqual(["c", "a", "b", "d"]);
+  });
+});
+
+// The document only holds rows some device has written into it. Everything created since —
+// a new project, a workspace made an hour ago — renders anyway, because the projection
+// leaves keys it does not recognise where it found them. That gap is invisible until a
+// drag: positioning is index arithmetic over the STORED list, so two rows the document has
+// never seen cannot be ordered against each other, and the drop appears to do nothing.
+describe("adopting rows the document has never seen", () => {
+  it("splices a missing row in next to the row it is drawn beside", () => {
+    const before = layout({ ungroupedProjectKeys: ["a", "c"] });
+
+    const next = adoptVisibleProjectKeys(before, {
+      groupId: null,
+      visibleKeys: ["a", "b", "c"],
+    });
+
+    expect(next.ungroupedProjectKeys).toEqual(["a", "b", "c"]);
+  });
+
+  it("keeps stored rows that are NOT on screen in their slots", () => {
+    // `offline` belongs to a host that is not connected right now, so it does not render.
+    // Overwriting the list with what is visible would silently drop it.
+    const before = layout({ ungroupedProjectKeys: ["a", "offline", "c"] });
+
+    const next = adoptVisibleProjectKeys(before, {
+      groupId: null,
+      visibleKeys: ["a", "c", "d"],
+    });
+
+    expect(next.ungroupedProjectKeys).toEqual(["a", "offline", "c", "d"]);
+  });
+
+  it("puts a row with nothing above it ahead of the row below it", () => {
+    const before = layout({ ungroupedProjectKeys: ["b"] });
+
+    const next = adoptVisibleProjectKeys(before, { groupId: null, visibleKeys: ["a", "b"] });
+
+    expect(next.ungroupedProjectKeys).toEqual(["a", "b"]);
+  });
+
+  it("leaves a row the document files under another group alone", () => {
+    const before = layout({
+      projectGroups: [{ id: "g1", name: "Work", projectKeys: ["a"] }],
+      ungroupedProjectKeys: ["b"],
+    });
+
+    const next = adoptVisibleProjectKeys(before, { groupId: null, visibleKeys: ["a", "b"] });
+
+    expect(next.ungroupedProjectKeys).toEqual(["b"]);
+    expect(next.projectGroups[0]?.projectKeys).toEqual(["a"]);
+  });
+
+  it("returns the same document when there is nothing to adopt", () => {
+    const before = layout({ ungroupedProjectKeys: ["a", "b"] });
+
+    expect(adoptVisibleProjectKeys(before, { groupId: null, visibleKeys: ["a", "b"] })).toBe(
+      before,
+    );
+  });
+
+  it("adopts into one group without disturbing another", () => {
+    const before = layout({
+      workspaceGroups: [
+        { id: "g1", name: "Review", projectKey: "p", workspaceKeys: ["w1"] },
+        { id: "g2", name: "Done", projectKey: "p", workspaceKeys: ["w9"] },
+      ],
+    });
+
+    const next = adoptVisibleWorkspaceKeys(before, {
+      projectKey: "p",
+      groupId: "g1",
+      visibleKeys: ["w1", "w2"],
+    });
+
+    expect(next.workspaceGroups[0]?.workspaceKeys).toEqual(["w1", "w2"]);
+    expect(next.workspaceGroups[1]?.workspaceKeys).toEqual(["w9"]);
+  });
+
+  // The regression the e2e caught: two projects added after the last layout write, dragged
+  // one past the other. Without adoption the drop resolves to "append", the projection
+  // prunes the key it cannot place, and the sidebar snaps back to the order it started in.
+  it("lets a drop reorder two rows the document has never seen", () => {
+    const before = layout({ revision: 7, ungroupedProjectKeys: ["written-long-ago"] });
+
+    const adopted = adoptVisibleProjectKeys(before, {
+      groupId: null,
+      visibleKeys: ["first", "second"],
+    });
+    const next = moveProjectToGroup(adopted, {
+      projectKey: "first",
+      groupId: null,
+      beforeKey: "second",
+    });
+
+    expect(next.ungroupedProjectKeys).toEqual(["written-long-ago", "second", "first"]);
   });
 });

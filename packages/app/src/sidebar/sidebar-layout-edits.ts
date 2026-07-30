@@ -56,6 +56,120 @@ function dropIntoList(keys: readonly string[], key: string, overKey: string | nu
   return [...keys.slice(0, overIndex), key, ...keys.slice(overIndex)];
 }
 
+// Teach a stored list about rows that are ON SCREEN but not in it yet.
+//
+// The document only knows the rows some device has written. A project added after the
+// user's last edit is not in it, and neither is a workspace created since. Both still
+// render — `applyStoredOrdering` leaves keys it does not recognise where it found them —
+// so the sidebar looks complete while the document is not.
+//
+// A drop names the row it landed on, and positioning is index arithmetic over the stored
+// list. Two rows the document has never seen therefore cannot be ordered against each
+// other AT ALL: the drop resolves to "append", the render prunes the half it cannot place,
+// and the sidebar snaps back to where it started. Not a rare state — it is every brand new
+// project on a machine where anything has ever been grouped.
+//
+// So each missing row is spliced in next to the neighbour it is drawn next to, rather than
+// appended: the stored order and the visible order have to agree before an edit can move
+// one row relative to another. Keys the document holds that are NOT on screen — rows from
+// a host that is offline right now — keep their slots untouched, which is the whole reason
+// this splices instead of just overwriting the list with what is visible.
+function adoptIntoList(input: {
+  stored: readonly string[];
+  visible: readonly string[];
+  isElsewhere: (key: string) => boolean;
+}): string[] {
+  const result = [...input.stored];
+  const placed = new Set(result);
+
+  input.visible.forEach((key, index) => {
+    if (placed.has(key) || input.isElsewhere(key)) {
+      return;
+    }
+
+    // Behind the nearest visible row above it that this list already holds...
+    let at = -1;
+    for (let above = index - 1; above >= 0 && at < 0; above -= 1) {
+      const found = result.indexOf(input.visible[above] ?? "");
+      if (found >= 0) {
+        at = found + 1;
+      }
+    }
+    // ...or, if it is the first of its kind, ahead of the nearest one below.
+    for (let below = index + 1; below < input.visible.length && at < 0; below += 1) {
+      const found = result.indexOf(input.visible[below] ?? "");
+      if (found >= 0) {
+        at = found;
+      }
+    }
+
+    result.splice(at < 0 ? result.length : at, 0, key);
+    placed.add(key);
+  });
+
+  return result;
+}
+
+function projectKeyIsStored(layout: SidebarLayout, projectKey: string): boolean {
+  return (
+    layout.ungroupedProjectKeys.includes(projectKey) ||
+    layout.projectGroups.some((group) => group.projectKeys.includes(projectKey))
+  );
+}
+
+// `visibleKeys` is one list as the sidebar draws it: a group's members, or the ungrouped
+// remainder. A key the document already files under a DIFFERENT group is left alone — it
+// is known, just not here, and adopting it would put the same project in two places.
+export function adoptVisibleProjectKeys(
+  layout: SidebarLayout,
+  input: { groupId: string | null; visibleKeys: readonly string[] },
+): SidebarLayout {
+  const stored = readProjectKeys(layout, input.groupId);
+  const adopted = adoptIntoList({
+    stored,
+    visible: input.visibleKeys,
+    isElsewhere: (key) => !stored.includes(key) && projectKeyIsStored(layout, key),
+  });
+  if (adopted.length === stored.length) {
+    return layout;
+  }
+  return setProjectKeysInGroup(layout, { groupId: input.groupId, projectKeys: adopted });
+}
+
+function workspaceKeyIsStored(
+  layout: SidebarLayout,
+  projectKey: string,
+  workspaceKey: string,
+): boolean {
+  return (
+    (layout.ungroupedWorkspaceKeysByProject[projectKey] ?? []).includes(workspaceKey) ||
+    layout.workspaceGroups.some(
+      (group) => group.projectKey === projectKey && group.workspaceKeys.includes(workspaceKey),
+    )
+  );
+}
+
+export function adoptVisibleWorkspaceKeys(
+  layout: SidebarLayout,
+  input: { projectKey: string; groupId: string | null; visibleKeys: readonly string[] },
+): SidebarLayout {
+  const stored = readWorkspaceKeys(layout, input.projectKey, input.groupId);
+  const adopted = adoptIntoList({
+    stored,
+    visible: input.visibleKeys,
+    isElsewhere: (key) =>
+      !stored.includes(key) && workspaceKeyIsStored(layout, input.projectKey, key),
+  });
+  if (adopted.length === stored.length) {
+    return layout;
+  }
+  return setWorkspaceKeysInGroup(layout, {
+    projectKey: input.projectKey,
+    groupId: input.groupId,
+    workspaceKeys: adopted,
+  });
+}
+
 function withoutProjectKey(layout: SidebarLayout, projectKey: string): SidebarLayout {
   return {
     ...layout,
