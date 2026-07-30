@@ -23,9 +23,9 @@ export function SidebarGroupDropTarget({
   children,
 }: {
   groupId: string | null;
-  children: (isOver: boolean) => ReactElement;
+  children: ReactNode;
 }) {
-  return children(false);
+  return children;
 }
 
 // Native never renders a drag overlay: there is no shared drag context to carry one.

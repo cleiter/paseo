@@ -109,22 +109,19 @@ export function ProjectGroupSection({
       {(sortable) => (
         <View>
           <SidebarGroupDropTarget groupId={group.groupId}>
-            {(isOver) => (
-              <GroupSectionHeader
-                kind="project"
-                groupId={group.groupId}
-                groupName={group.groupName}
-                count={group.projects.length}
-                collapsed={collapsed}
-                onToggle={handleToggle}
-                onRename={handleRename}
-                onDelete={handleDelete}
-                dragHandleProps={sortable.dragHandleProps}
-                isDragging={sortable.isDragging}
-                isDropTarget={isOver}
-                testID={`sidebar-project-group-${group.groupId}`}
-              />
-            )}
+            <GroupSectionHeader
+              kind="project"
+              groupId={group.groupId}
+              groupName={group.groupName}
+              count={group.projects.length}
+              collapsed={collapsed}
+              onToggle={handleToggle}
+              onRename={handleRename}
+              onDelete={handleDelete}
+              dragHandleProps={sortable.dragHandleProps}
+              isDragging={sortable.isDragging}
+              testID={`sidebar-project-group-${group.groupId}`}
+            />
           </SidebarGroupDropTarget>
           {collapsed ? null : (
             // Same rail as a workspace group, one level up: the projects hang off their

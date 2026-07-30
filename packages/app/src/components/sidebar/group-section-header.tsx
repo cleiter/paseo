@@ -65,8 +65,6 @@ export interface GroupSectionHeaderProps {
   drag?: () => void;
   isDragging?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
-  // A row is hovering this header and would land in this group if dropped.
-  isDropTarget?: boolean;
   onRename?: () => void;
   onDelete?: () => void;
   indented?: boolean;
@@ -94,7 +92,6 @@ export function GroupSectionHeader({
   drag,
   isDragging,
   dragHandleProps,
-  isDropTarget,
   onRename,
   onDelete,
   indented,
@@ -127,14 +124,17 @@ export function GroupSectionHeader({
   // Same hover fill as the project and workspace rows (surfaceSidebarHover). A group
   // header is a row in the tree like any other, so it has to answer the cursor the way
   // its neighbours do.
+  //
+  // No drop-target state here. A row hovering this header is answered by the PREVIEW —
+  // the row moves into the group and the list opens a gap for it — and a highlight
+  // painted on top of that is a second, vaguer answer to the same question.
   const containerStyle = useMemo(
     () => [
       indented ? styles.containerIndented : styles.container,
       isHovered ? styles.containerHovered : null,
-      isDropTarget ? styles.containerDropTarget : null,
       isDragging ? styles.dragging : null,
     ],
-    [indented, isHovered, isDropTarget, isDragging],
+    [indented, isHovered, isDragging],
   );
   const Chevron = collapsed ? ThemedChevronRight : ThemedChevronDown;
   // A project group is a bucket you file things into — Work, Open Source — so it keeps the
@@ -247,13 +247,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   containerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
-  },
-  // A row is hovering: say "this group will take it". Dimming the header instead — the
-  // obvious move — reads as disabled, which is the opposite message.
-  containerDropTarget: {
-    backgroundColor: theme.colors.surface2,
-    borderWidth: 1,
-    borderColor: theme.colors.accent,
   },
   dragging: {
     opacity: 0.5,

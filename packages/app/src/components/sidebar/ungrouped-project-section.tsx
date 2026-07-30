@@ -130,19 +130,16 @@ export function UngroupedProjectSection({
     <View>
       {showHeader ? (
         <SidebarGroupDropTarget groupId={null}>
-          {(isOver) => (
-            <GroupSectionHeader
-              kind="project"
-              ungrouped
-              groupId={UNGROUPED_PROJECTS_COLLAPSE_KEY}
-              groupName={t("sidebar.projectGroup.noGroup")}
-              count={projects.length}
-              collapsed={collapsed}
-              onToggle={handleToggle}
-              isDropTarget={isOver}
-              testID="sidebar-project-no-group"
-            />
-          )}
+          <GroupSectionHeader
+            kind="project"
+            ungrouped
+            groupId={UNGROUPED_PROJECTS_COLLAPSE_KEY}
+            groupName={t("sidebar.projectGroup.noGroup")}
+            count={projects.length}
+            collapsed={collapsed}
+            onToggle={handleToggle}
+            testID="sidebar-project-no-group"
+          />
         </SidebarGroupDropTarget>
       ) : null}
       {projectList}

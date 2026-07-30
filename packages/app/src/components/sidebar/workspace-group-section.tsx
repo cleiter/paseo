@@ -186,20 +186,17 @@ export function WorkspaceGroupSection({
     return (
       <View style={styles.section}>
         <SidebarGroupDropTarget groupId={null}>
-          {(isOver) => (
-            <GroupSectionHeader
-              kind="workspace"
-              ungrouped
-              groupId={collapseKey}
-              groupName={t("sidebar.workspaceGroup.noGroup")}
-              count={workspaces.length}
-              collapsed={collapsed}
-              onToggle={handleToggle}
-              isDropTarget={isOver}
-              indented
-              testID={testID}
-            />
-          )}
+          <GroupSectionHeader
+            kind="workspace"
+            ungrouped
+            groupId={collapseKey}
+            groupName={t("sidebar.workspaceGroup.noGroup")}
+            count={workspaces.length}
+            collapsed={collapsed}
+            onToggle={handleToggle}
+            indented
+            testID={testID}
+          />
         </SidebarGroupDropTarget>
         {workspaceList}
       </View>
@@ -214,23 +211,20 @@ export function WorkspaceGroupSection({
       {(sortable) => (
         <View style={styles.section}>
           <SidebarGroupDropTarget groupId={groupId}>
-            {(isOver) => (
-              <GroupSectionHeader
-                kind="workspace"
-                groupId={groupId}
-                groupName={groupName ?? ""}
-                count={workspaces.length}
-                collapsed={collapsed}
-                onToggle={handleToggle}
-                onRename={canEdit ? handleRename : undefined}
-                onDelete={canEdit ? handleDelete : undefined}
-                dragHandleProps={sortable.dragHandleProps}
-                isDragging={sortable.isDragging}
-                isDropTarget={isOver}
-                indented
-                testID={testID}
-              />
-            )}
+            <GroupSectionHeader
+              kind="workspace"
+              groupId={groupId}
+              groupName={groupName ?? ""}
+              count={workspaces.length}
+              collapsed={collapsed}
+              onToggle={handleToggle}
+              onRename={canEdit ? handleRename : undefined}
+              onDelete={canEdit ? handleDelete : undefined}
+              dragHandleProps={sortable.dragHandleProps}
+              isDragging={sortable.isDragging}
+              indented
+              testID={testID}
+            />
           </SidebarGroupDropTarget>
           {workspaceList}
         </View>

@@ -85,6 +85,16 @@ preview. A re-layout cannot move the target; only you can. With that in place he
 preview safely, and hovering a group — including an empty one, and including the
 "Ungrouped" remainder — opens a gap at the end.
 
+**Which is why there is no drop-zone highlight.** Group headers used to paint themselves
+accent-bordered while a row was over them (`isOver` → `containerDropTarget`). That was
+built when headers did not preview, and it is the wrong shape now that they do: the
+preview already shows the row sitting in the group, at the position it will occupy, which
+is a stricter answer than "somewhere in here". Two answers to one question is worse than
+one — the highlight says a group, the gap says a slot, and they draw the eye to different
+places. `SidebarGroupDropTarget` still registers the droppable (a header is the only way
+to fill an empty group); it just renders its children and nothing else. Do not add the
+highlight back: if a hover feels dead, the preview is not firing, and that is the bug.
+
 ### 4. Collision detection is `pointerWithin`, with no fallback for rows
 
 The sidebar is a vertical stack that **reshapes under the cursor**: a preview shrinks one

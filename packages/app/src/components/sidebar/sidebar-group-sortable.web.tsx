@@ -84,24 +84,27 @@ export function SidebarGroupSortable({
 // (its header) without the section's much larger rectangle competing with the individual
 // rows inside it for the same drop.
 //
-// `isOver` is handed to the header rather than styled here, so the highlight can be a
-// real theme token. Dimming it — the obvious thing — reads as DISABLED, which is the
-// opposite of what a drop target is trying to say.
+// It registers the droppable and renders nothing of its own. `isOver` used to be handed
+// down so the header could paint itself as a drop zone; it does not any more. Hovering a
+// header PREVIEWS — the row moves into that group and a gap opens at its end — so the
+// answer to "would this land here" is the list itself rearranging, which is both more
+// precise than a highlight and already on screen. A highlight on top of it is a second
+// answer to a question the preview has finished answering.
 export function SidebarGroupDropTarget({
   groupId,
   children,
 }: {
   // Null addresses the ungrouped remainder.
   groupId: string | null;
-  children: (isOver: boolean) => ReactElement;
+  children: ReactNode;
 }) {
   const data: SidebarGroupHeaderDropData = {
     kind: "sidebar-group-header",
     groupId,
   };
-  const { setNodeRef, isOver } = useDroppable({ id: sidebarGroupHeaderId(groupId), data });
+  const { setNodeRef } = useDroppable({ id: sidebarGroupHeaderId(groupId), data });
 
-  return <div ref={setNodeRef}>{children(isOver)}</div>;
+  return <div ref={setNodeRef}>{children}</div>;
 }
 
 // What the drag overlay carries. Its ONLY job is to be opaque: the overlay floats over the
