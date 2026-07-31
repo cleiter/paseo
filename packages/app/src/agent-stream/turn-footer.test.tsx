@@ -30,6 +30,11 @@ vi.mock("@/stores/session-store", () => ({
 
 vi.mock("@/runtime/host-runtime", () => ({
   useHostRuntimeIsConnected: () => true,
+  useHostRuntimeIsDirectoryLoading: () => false,
+}));
+
+vi.mock("@/runtime/host-features", () => ({
+  useHostFeature: () => true,
 }));
 
 vi.mock("@/runtime/activity/stream-activity", () => ({

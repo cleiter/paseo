@@ -241,6 +241,32 @@ describe("live turn progress", () => {
       harness.cleanup();
     }
   });
+
+  test("a metadata write bumps updatedAt without resetting the stall clock", async () => {
+    const harness = await createHarness();
+    try {
+      await startAutonomousTurnWithProgress(harness, "autonomous-1", 512);
+      const agent = harness.manager.getAgent(harness.agentId);
+      if (!agent) throw new Error("agent is gone");
+
+      const streamActivityAtMs = agent.lastStreamActivityAt?.getTime();
+      expect(streamActivityAtMs).toBeTypeOf("number");
+      const updatedAtBefore = agent.updatedAt.getTime();
+
+      // Labels stand in for every non-stream `touchUpdatedAt` caller — renames, mode changes,
+      // and the background title generation that lands on any silent agent. If idleness tracked
+      // `updatedAt`, any one of them would silently reset a genuine stall.
+      await harness.manager.setLabels(harness.agentId, { pinned: "true" });
+
+      // `getAgent` hands back a shallow copy, so re-read rather than reusing the snapshot above.
+      const after = harness.manager.getAgent(harness.agentId);
+      if (!after) throw new Error("agent is gone");
+      expect(after.updatedAt.getTime()).toBeGreaterThan(updatedAtBefore);
+      expect(after.lastStreamActivityAt?.getTime()).toBe(streamActivityAtMs);
+    } finally {
+      harness.cleanup();
+    }
+  });
 });
 
 describe("live turn progress is cleared at every turn boundary", () => {

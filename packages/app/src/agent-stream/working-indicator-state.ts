@@ -29,12 +29,16 @@ export interface WorkingIndicatorActivity {
 }
 
 export function resolveWorkingIndicatorActivity(input: {
-  /** Milliseconds of observed silence, or undefined when it cannot be known. */
+  /**
+   * Milliseconds of observed silence, or undefined when it cannot be known — which is also how
+   * the caller reports a daemon too old to measure idleness at all.
+   */
   idleMs: number | undefined;
   activeTurnOutputTokens: number | undefined;
   hasPendingPermission: boolean;
   isConnected: boolean;
-  isHydrated: boolean;
+  /** Whether the agent directory is currently believed to be up to date for this host. */
+  isDirectoryFresh: boolean;
   stallThresholdMs?: number;
 }): WorkingIndicatorActivity {
   // `> 0`, not `!== undefined`: rendering "0 tokens" is noise, not information.
@@ -52,8 +56,10 @@ export function resolveWorkingIndicatorActivity(input: {
   // Disconnected means we stopped receiving, not that the agent stopped producing.
   if (!input.isConnected) return { outputTokens };
   // Connected is not freshness: the replica cache restores `running` plus an old activity
-  // value, so a cached agent would read as stalled between reconnect and rehydration.
-  if (!input.isHydrated) return { outputTokens };
+  // value, so a cached agent would read as stalled between reconnect and rehydration. This has
+  // to track every refetch, not just the first one — a socket that drops and resumes after a
+  // phone sleeps re-enters exactly the same stale-replica window it did on cold start.
+  if (!input.isDirectoryFresh) return { outputTokens };
   if (input.idleMs === undefined) return { outputTokens };
 
   const threshold = input.stallThresholdMs ?? WORKING_INDICATOR_STALL_THRESHOLD_MS;
@@ -78,28 +84,56 @@ export function formatStallDuration(idleMs: number): string {
 }
 
 /**
+ * How stale a snapshot may be when observation begins and still be extrapolated forward.
+ *
+ * Exists only to absorb ordering: on a cold open the agent record lands from the directory
+ * fetch a moment *before* the footer mounts, so the gap is a few hundred milliseconds of render
+ * scheduling rather than a real blind spot. Anything larger is a genuine blind spot.
+ */
+const UNOBSERVED_SNAPSHOT_GRACE_MS = 15_000;
+
+/**
  * Combines the daemon's idle duration with the client's own observation of stream traffic.
  *
  * Two deltas, each measured entirely within one clock: the daemon measured `activeTurnIdleMs`
  * on its own clock at payload-build time, and the client adds only its own time since receipt.
  * No cross-clock comparison exists here, so skew between daemon and phone cannot affect it.
  *
- * The client-observed value wins when it is fresher (`Math.min`), which fails safe: it can
- * only ever under-report a stall, never invent one.
+ * The daemon's duration is extrapolated forward from receipt, which is only sound while the
+ * client is receiving this agent's stream — that is what makes "nothing has happened since"
+ * something it knows rather than something it assumes. `activeTurnIdleMs` refreshes only when
+ * the daemon emits state, and timeline events do not, so a healthy agent deep in a long tool
+ * call can easily carry a ten-minute-old snapshot. Extrapolating that across a window nobody was
+ * watching would report ten minutes of silence for an agent that never stopped working, so when
+ * the snapshot predates the observation window the daemon's value is replaced — not merely
+ * capped — by the window itself: silence this client watched first-hand. That substitute starts
+ * at zero and grows, so a real stall on a stale record still surfaces, late rather than wrong.
+ *
+ * Replaced rather than capped, because the window is zero-length at mount. Capping with it would
+ * mean no stall could ever render for a full threshold after opening an agent — including the
+ * case this whole mechanism exists for, a second client opening an agent that has genuinely been
+ * silent for ten minutes.
+ *
+ * The last stream event the client actually saw shortens whichever of the two applies. Every
+ * candidate can only ever shorten a claimed stall, so the calculation fails safe throughout.
  */
 export function resolveIdleMs(input: {
   activeTurnIdleMs: number | undefined;
   activeTurnIdleReceivedAt: Date | undefined;
   lastStreamActivityAtMs: number | undefined;
+  /** When this client began receiving the agent's stream. */
+  observationStartedAtMs: number;
   nowMs: number;
-}): number | undefined {
-  const candidates: number[] = [];
+}): number {
+  const observedMs = Math.max(0, input.nowMs - input.observationStartedAtMs);
+  let baselineMs = observedMs;
   if (input.activeTurnIdleMs !== undefined && input.activeTurnIdleReceivedAt !== undefined) {
-    const sinceReceipt = input.nowMs - input.activeTurnIdleReceivedAt.getTime();
-    candidates.push(input.activeTurnIdleMs + Math.max(0, sinceReceipt));
+    const receivedAtMs = input.activeTurnIdleReceivedAt.getTime();
+    const unobservedGapMs = input.observationStartedAtMs - receivedAtMs;
+    if (unobservedGapMs <= UNOBSERVED_SNAPSHOT_GRACE_MS) {
+      baselineMs = input.activeTurnIdleMs + Math.max(0, input.nowMs - receivedAtMs);
+    }
   }
-  if (input.lastStreamActivityAtMs !== undefined) {
-    candidates.push(Math.max(0, input.nowMs - input.lastStreamActivityAtMs));
-  }
-  return candidates.length === 0 ? undefined : Math.min(...candidates);
+  if (input.lastStreamActivityAtMs === undefined) return baselineMs;
+  return Math.min(baselineMs, Math.max(0, input.nowMs - input.lastStreamActivityAtMs));
 }

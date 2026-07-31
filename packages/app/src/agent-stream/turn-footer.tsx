@@ -4,7 +4,11 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { formatTokenCount } from "@/components/context-window-meter.utils";
-import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import {
+  useHostRuntimeIsConnected,
+  useHostRuntimeIsDirectoryLoading,
+} from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { readAgentStreamActivityAt } from "@/runtime/activity/stream-activity";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -167,39 +171,58 @@ const WorkingActivity = memo(function WorkingActivity({
   const hasPendingPermission = useSessionStore(
     (state) => (state.sessions[serverId]?.agents.get(agentId)?.pendingPermissions.length ?? 0) > 0,
   );
-  const isHydrated = useSessionStore(
+  const hasHydratedAgents = useSessionStore(
     (state) => state.sessions[serverId]?.hasHydratedAgents === true,
   );
+  // `hasHydratedAgents` latches true on the first load and never resets, so on its own it only
+  // covers cold start. The loading signal is what covers every refetch after that — it reports
+  // `revalidating` while a reconnect re-fetches the directory, which is the same stale-replica
+  // window under a different name.
+  const isDirectoryLoading = useHostRuntimeIsDirectoryLoading(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  // COMPAT(agentTurnIdle): added in v0.2.6, remove gate after 2027-01-31 once daemon floor >= v0.2.6.
+  // The one capability check for the stall half. A daemon without it does not measure idleness,
+  // and the client has no sound way to measure it alone: `agent_stream` is withheld for agents
+  // whose timeline is not being viewed, so an empty activity map means "not subscribed" just as
+  // often as it means "silent". Everything downstream reads a plain `idleMs`.
+  const supportsTurnIdle = useHostFeature(serverId, "agentTurnIdle");
 
   // The clock lives in state rather than as a discarded tick counter so the value the label is
   // derived from is itself reactive — same shape as `LiveElapsed`. Re-seeded on activation so a
   // panel that was inactive across a long silence does not render a stale instant for one tick.
   const [nowMs, setNowMs] = useState(() => Date.now());
+  // Stream delivery follows what is on screen, so activation is when this client starts hearing
+  // from the agent — and therefore when silence becomes something it observes rather than infers.
+  const [observationStartedAtMs, setObservationStartedAtMs] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;
-    setNowMs(Date.now());
+    const startedAtMs = Date.now();
+    setNowMs(startedAtMs);
+    setObservationStartedAtMs(startedAtMs);
     const handle = setInterval(() => setNowMs(Date.now()), WORKING_ACTIVITY_TICK_MS);
     return () => clearInterval(handle);
-  }, [active]);
+  }, [active, serverId, agentId]);
 
   // Reading a mutable map during render, deliberately. The value is monotonic and only ever
   // feeds a minute-granularity label that the tick above re-derives anyway, so no frame can
   // tear into a wrong value. `useSyncExternalStore` over the map would instead re-render this
   // leaf on every single `agent_stream` message.
-  const idleMs = resolveIdleMs({
-    activeTurnIdleMs,
-    activeTurnIdleReceivedAt,
-    lastStreamActivityAtMs: readAgentStreamActivityAt(serverId, agentId),
-    nowMs,
-  });
+  const idleMs = supportsTurnIdle
+    ? resolveIdleMs({
+        activeTurnIdleMs,
+        activeTurnIdleReceivedAt,
+        lastStreamActivityAtMs: readAgentStreamActivityAt(serverId, agentId),
+        observationStartedAtMs,
+        nowMs,
+      })
+    : undefined;
 
   const activity = resolveWorkingIndicatorActivity({
     idleMs,
     activeTurnOutputTokens,
     hasPendingPermission,
     isConnected,
-    isHydrated,
+    isDirectoryFresh: hasHydratedAgents && !isDirectoryLoading,
   });
 
   const { outputTokens, stalledIdleMs } = activity;

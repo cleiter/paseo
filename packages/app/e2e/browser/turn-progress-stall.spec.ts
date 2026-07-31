@@ -15,8 +15,16 @@ test.skip(
 const LABEL_TIMEOUT_MS = 40_000;
 const TICK_MS = 15_000;
 
+/**
+ * These specs wait out real thresholds rather than faking a clock, so they are slow by design —
+ * and tearing down a workspace whose turn is still running blocks the daemon for around half a
+ * minute, which lands on whichever spec runs next. The generous budget is for that teardown, not
+ * for the assertions.
+ */
+const SPEC_TIMEOUT_MS = 180_000;
+
 test("surfaces a stalled turn in the working indicator", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(SPEC_TIMEOUT_MS);
 
   // `stalled-stream` emits the turn's first chunk and then goes quiet for half an hour without
   // ending the turn — the only way to reach this state from a provider that otherwise streams
@@ -53,7 +61,7 @@ test("surfaces a stalled turn in the working indicator", async ({ page }) => {
 });
 
 test("does not call a turn stalled while it waits on the user", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(SPEC_TIMEOUT_MS);
 
   // The positive control lives in the test above: without it, "no label" here would be
   // indistinguishable from the feature being dead.
@@ -79,7 +87,7 @@ test("does not call a turn stalled while it waits on the user", async ({ page })
 });
 
 test("shows the running turn's token count beside the elapsed timer", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(SPEC_TIMEOUT_MS);
 
   const workspace = await seedMockAgentWorkspace({
     repoPrefix: "turn-tokens",

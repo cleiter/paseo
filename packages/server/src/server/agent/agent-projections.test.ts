@@ -528,6 +528,39 @@ describe("toAgentPayload", () => {
 
     expect(payload.activeTurnIdleMs).toBe(0);
   });
+
+  it("measures idleness from stream activity, not from every metadata write", () => {
+    // `touchUpdatedAt` fires for renames, mode changes, label writes and metadata-generated
+    // titles. None of those are the agent producing output, so if idleness were measured from
+    // `updatedAt` a background title generation would silently reset a genuine stall.
+    const agent = createManagedAgent({
+      lifecycle: "running",
+      lastStreamActivityAt: new Date("2025-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2025-01-01T00:04:00.000Z"),
+    });
+
+    const payload = toAgentPayload(agent, {
+      nowMs: new Date("2025-01-01T00:05:00.000Z").getTime(),
+    });
+
+    expect(payload.activeTurnIdleMs).toBe(300_000);
+  });
+
+  it("falls back to updatedAt before the first live stream event", () => {
+    // An agent restored from disk has no stream activity yet, and `updatedAt` is the closest
+    // thing to an activity instant that survives a restart.
+    const agent = createManagedAgent({
+      lifecycle: "running",
+      updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+    });
+
+    const payload = toAgentPayload(agent, {
+      nowMs: new Date("2025-01-01T00:00:30.000Z").getTime(),
+    });
+
+    expect(agent.lastStreamActivityAt).toBeUndefined();
+    expect(payload.activeTurnIdleMs).toBe(30_000);
+  });
 });
 
 describe("toRecentProviderSessionDescriptorPayload", () => {

@@ -155,8 +155,13 @@ export function toAgentPayload(
     }
     // A duration, never a timestamp: measured entirely on the daemon's clock so no client
     // ever compares it against its own. See the schema comment on `activeTurnIdleMs`.
+    //
+    // Measured from `lastStreamActivityAt`, not `updatedAt`: the latter is bumped by renames,
+    // mode changes and metadata-generated titles, any of which would silently reset a genuine
+    // stall. `updatedAt` is only the fallback for an agent restored before the first live event.
     const nowMs = options?.nowMs ?? Date.now();
-    payload.activeTurnIdleMs = Math.max(0, nowMs - agent.updatedAt.getTime());
+    const lastActivityAt = agent.lastStreamActivityAt ?? agent.updatedAt;
+    payload.activeTurnIdleMs = Math.max(0, nowMs - lastActivityAt.getTime());
   }
 
   if (agent.lastError !== undefined) {

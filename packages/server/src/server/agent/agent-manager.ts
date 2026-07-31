@@ -351,6 +351,15 @@ interface ManagedAgentBase {
    * open/terminal sites already maintain.
    */
   activeTurnOutputTokens?: number;
+  /**
+   * When the agent last produced live stream output, or last crossed a turn boundary. Distinct
+   * from `updatedAt`, which `touchUpdatedAt` also bumps for renames, mode changes, label writes
+   * and metadata-generated titles — none of which are the agent doing work. Silence is the whole
+   * signal here, so anything that resets the clock without the agent having produced output would
+   * hide a genuine stall. Undefined until the first live event; consumers fall back to
+   * `updatedAt`.
+   */
+  lastStreamActivityAt?: Date;
   lastError?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
@@ -784,6 +793,9 @@ export class AgentManager {
    */
   private clearActiveTurnProgress(agent: ManagedAgent): void {
     agent.activeTurnOutputTokens = undefined;
+    // A boundary is itself an activity instant: a turn that just started has been silent for
+    // zero milliseconds, not for however long the gap before it was.
+    agent.lastStreamActivityAt = new Date();
   }
 
   private touchUpdatedAt(agent: ManagedAgent): Date {
@@ -3496,6 +3508,10 @@ export class AgentManager {
     // Only update timestamp for live events, not history replay
     if (!options?.fromHistory) {
       this.touchUpdatedAt(agent);
+      // The single place the daemon observes the agent actually producing output, and therefore
+      // the only write site for the stall clock. Every other `touchUpdatedAt` call is a metadata
+      // write, not work.
+      agent.lastStreamActivityAt = new Date();
       if (this.agentStreamCoalescer.handle(agent.id, event)) {
         this.traceCoalescerBuffered(agent, event, eventTurnId);
         return false;

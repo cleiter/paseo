@@ -1,7 +1,6 @@
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
-import { forgetAgentStreamActivity } from "@/runtime/activity/stream-activity";
 import { queryClient } from "@/data/query-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
@@ -114,9 +113,6 @@ export class AgentDirectoryReplica {
     this.members.delete(agentId);
     this.advance(agentId);
     removeAgentDirectoryReplica(this.serverId, agentId);
-    // The stream-activity tracker is a module-scope map with no owner, so a deleted agent's
-    // entry would otherwise live for the process lifetime. This is its only cleanup site.
-    forgetAgentStreamActivity(this.serverId, agentId);
   }
 
   private advance(agentId: string): void {
