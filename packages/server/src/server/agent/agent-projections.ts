@@ -26,6 +26,8 @@ interface ProjectionOptions {
   title?: string | null;
   createdAt?: string;
   internal?: boolean;
+  /** Injectable clock, so the derived idle duration is assertable without touching wall time. */
+  nowMs?: number;
 }
 
 interface RecentProviderSessionProjectionOptions {
@@ -140,6 +142,21 @@ export function toAgentPayload(
   const usage = sanitizeUsage(agent.lastUsage);
   if (usage !== undefined) {
     payload.lastUsage = usage;
+  }
+
+  // Live turn progress. Guarded on `running` as a backstop: the manager clears the count at
+  // every turn boundary, but a missed clear would surface as the *previous* turn's total
+  // rendered as the current turn's — silent and user-visible. The clear sites stay the primary
+  // owner of the invariant and are asserted individually in agent-manager.test.ts. Which turn a
+  // count belongs to rides `activeTurn` above; there is no second turn id on the wire.
+  if (agent.lifecycle === "running") {
+    if (agent.activeTurnOutputTokens !== undefined) {
+      payload.activeTurnOutputTokens = agent.activeTurnOutputTokens;
+    }
+    // A duration, never a timestamp: measured entirely on the daemon's clock so no client
+    // ever compares it against its own. See the schema comment on `activeTurnIdleMs`.
+    const nowMs = options?.nowMs ?? Date.now();
+    payload.activeTurnIdleMs = Math.max(0, nowMs - agent.updatedAt.getTime());
   }
 
   if (agent.lastError !== undefined) {

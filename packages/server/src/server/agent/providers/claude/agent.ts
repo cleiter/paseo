@@ -1852,6 +1852,12 @@ class ClaudeContextUsageState {
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
   private completedResultTurns = 0;
+  /**
+   * Output tokens from API requests that have already finished within the current turn. A turn
+   * makes one request per tool round-trip and `streamRequestOutputTokens` only ever describes
+   * the request in flight, so the turn total is this plus the in-flight request's count.
+   */
+  private completedRequestsOutputTokens = 0;
 
   constructor(initialContextWindowMaxTokens?: number) {
     this.contextWindowMaxTokens = initialContextWindowMaxTokens;
@@ -1861,6 +1867,7 @@ class ClaudeContextUsageState {
     this.streamRequestInputTokens = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = undefined;
+    this.completedRequestsOutputTokens = 0;
   }
 
   setInitialContextWindowMaxTokens(contextWindowMaxTokens: number | undefined): void {
@@ -1887,6 +1894,9 @@ class ClaudeContextUsageState {
         return null;
       }
       this.streamRequestInputTokens = inputTokens;
+      // A new request is starting: bank what the previous one produced before the per-request
+      // counter is reset, or the turn total would only ever reflect the newest request.
+      this.completedRequestsOutputTokens += this.streamRequestOutputTokens ?? 0;
       this.streamRequestOutputTokens = 0;
     } else if (eventType === "message_delta") {
       const outputTokens = readStreamRequestOutputTokens(streamEvent);
@@ -1950,6 +1960,14 @@ class ClaudeContextUsageState {
     return usedTokens > 0 ? usedTokens : undefined;
   }
 
+  /**
+   * Output tokens produced so far by the turn in progress. A sibling of `usage` on the event,
+   * never a member of it: `AgentUsage` describes a completed turn.
+   */
+  private activeTurnOutputTokens(): number {
+    return this.completedRequestsOutputTokens + (this.streamRequestOutputTokens ?? 0);
+  }
+
   private createUsageUpdatedEvent(contextWindowUsedTokens: number): AgentStreamEvent {
     const usage: AgentUsage = {
       contextWindowUsedTokens,
@@ -1961,10 +1979,15 @@ class ClaudeContextUsageState {
       type: "usage_updated",
       provider: "claude",
       usage,
+      activeTurnOutputTokens: this.activeTurnOutputTokens(),
     };
   }
 
   buildCompactionUsageEvent(postTokens: number | undefined): AgentStreamEvent {
+    // Compaction resets the per-request counters mid-turn, but it does not un-produce what the
+    // turn has already written. Bank the in-flight request first, or the counter visibly drops
+    // to zero and reads as a restart.
+    this.completedRequestsOutputTokens += this.streamRequestOutputTokens ?? 0;
     this.streamRequestInputTokens = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = postTokens;
@@ -1979,6 +2002,7 @@ class ClaudeContextUsageState {
       type: "usage_updated",
       provider: "claude",
       usage,
+      activeTurnOutputTokens: this.activeTurnOutputTokens(),
     };
   }
 }

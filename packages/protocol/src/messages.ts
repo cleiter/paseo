@@ -748,6 +748,21 @@ export const AgentSnapshotPayloadSchema = z.object({
   persistence: AgentPersistenceHandleSchema.nullable(),
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),
+  /**
+   * Output tokens produced so far by the currently running turn. Absent when no turn is
+   * running, or when the provider does not report usage mid-turn. Which turn produced it is
+   * `activeTurn.turnId`, which lets a client discard a count that arrived out of order and
+   * belongs to a turn other than the one it is displaying.
+   */
+  activeTurnOutputTokens: z.number().optional(),
+  /**
+   * Milliseconds since the agent last produced stream activity, measured entirely on the
+   * daemon's clock at payload-build time. Deliberately a duration and never a timestamp:
+   * the daemon and the client are different machines with no clock-offset mechanism between
+   * them, so a timestamp the client compared against its own `Date.now()` would let clock
+   * skew fabricate or indefinitely suppress the derived idle state.
+   */
+  activeTurnIdleMs: z.number().optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
