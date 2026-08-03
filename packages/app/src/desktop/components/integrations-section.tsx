@@ -131,30 +131,6 @@ export function IntegrationsSection() {
     [theme.iconSize.sm, theme.colors.foregroundMuted],
   );
 
-  const cliDocsLink = useMemo(
-    () => (
-      <DocsLink
-        icon={arrowIcon}
-        label={t("settings.integrations.docs.cli")}
-        accessibilityLabel={t("settings.integrations.docs.openCli")}
-        onPress={handleOpenCliDocs}
-      />
-    ),
-    [arrowIcon, handleOpenCliDocs, t],
-  );
-
-  const skillsDocsLink = useMemo(
-    () => (
-      <DocsLink
-        icon={arrowIcon}
-        label={t("settings.integrations.docs.skills")}
-        accessibilityLabel={t("settings.integrations.docs.openSkills")}
-        onPress={handleOpenSkillsDocs}
-      />
-    ),
-    [arrowIcon, handleOpenSkillsDocs, t],
-  );
-
   if (!showSection) {
     return null;
   }
@@ -182,7 +158,14 @@ export function IntegrationsSection() {
             <Text style={settingsStyles.rowHint}>
               {t("settings.integrations.commandLine.description")}
             </Text>
-            <View style={styles.docsLinkRow}>{cliDocsLink}</View>
+            <View style={styles.docsLinkRow}>
+              <DocsLink
+                icon={arrowIcon}
+                label={t("settings.integrations.docs.cli")}
+                accessibilityLabel={t("settings.integrations.docs.openCli")}
+                onPress={handleOpenCliDocs}
+              />
+            </View>
           </View>
           {cliStatus?.installed ? (
             <View style={styles.installedLabel}>
@@ -213,7 +196,14 @@ export function IntegrationsSection() {
                 ? t("settings.integrations.skills.updateAvailable")
                 : t("settings.integrations.skills.description")}
             </Text>
-            <View style={styles.docsLinkRow}>{skillsDocsLink}</View>
+            <View style={styles.docsLinkRow}>
+              <DocsLink
+                icon={arrowIcon}
+                label={t("settings.integrations.docs.skills")}
+                accessibilityLabel={t("settings.integrations.docs.openSkills")}
+                onPress={handleOpenSkillsDocs}
+              />
+            </View>
           </View>
           <View style={styles.actionsRow}>
             <Button
