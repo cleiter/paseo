@@ -4,10 +4,6 @@ import type { AgentUsage } from "@getpaseo/protocol/agent-types";
 interface AgentUpdateValue {
   updatedAt: Date | string;
   lastUsage?: AgentUsage;
-  activeTurn?: { turnId: string | null } | null;
-  activeTurnOutputTokens?: number;
-  activeTurnIdleMs?: number;
-  activeTurnIdleReceivedAt?: Date;
 }
 
 function timestamp(value: Date | string): number {
@@ -24,25 +20,15 @@ export function acceptAgentDirectoryUpdate<T extends AgentUpdateValue>(
   // already hold. Usage is grafted forward anyway because a late usage event still describes
   // real consumption that the newer record may not have carried.
   //
-  // Live turn progress is different: grafting a stale count forward can put turn N's number on
-  // turn N+1's running record, which is the exact staleness this feature exists to avoid. Only
-  // carry it when both records agree on which turn produced it.
-  const incomingTurnId = incoming.activeTurn?.turnId ?? undefined;
-  const sameTurn = incomingTurnId !== undefined && incomingTurnId === current.activeTurn?.turnId;
-  const progress: Partial<AgentUpdateValue> = sameTurn
-    ? {
-        activeTurnOutputTokens: incoming.activeTurnOutputTokens,
-        activeTurnIdleMs: incoming.activeTurnIdleMs,
-        activeTurnIdleReceivedAt: incoming.activeTurnIdleReceivedAt,
-      }
-    : {};
-  const hasProgressChange =
-    sameTurn &&
-    (incoming.activeTurnOutputTokens !== current.activeTurnOutputTokens ||
-      incoming.activeTurnIdleMs !== current.activeTurnIdleMs);
-
+  // Live turn progress (`activeTurnOutputTokens`, `activeTurnIdleMs` and its receipt instant) is
+  // deliberately NOT grafted, and the check above is the whole reason it does not need to be:
+  // the record we already hold was projected later, and the daemon rebuilds all three from live
+  // state on every running snapshot, so a stale record's progress can only be equal or worse.
+  // Writing it forward would let the count visibly regress mid-turn, resurrect a count the
+  // provider had already cleared, or pair an old idle duration with an old receipt instant and
+  // fabricate a stall the client never observed.
   if (incoming.lastUsage === undefined || equal(incoming.lastUsage, current.lastUsage)) {
-    return hasProgressChange ? { ...current, ...progress } : current;
+    return current;
   }
-  return { ...current, ...progress, lastUsage: incoming.lastUsage };
+  return { ...current, lastUsage: incoming.lastUsage };
 }

@@ -46,103 +46,114 @@ describe("acceptAgentDirectoryUpdate", () => {
     expect(result.lastUsage).toEqual({ inputTokens: 10 });
   });
 
-  describe("live turn progress", () => {
-    it("carries a stale count forward when both records describe the same turn", () => {
+  // A stale update must never write live turn progress forward. The `updatedAt` ordering above
+  // already guarantees the record we hold was projected later, and the daemon rebuilds all three
+  // progress fields from live state on every running snapshot — so anything an older record
+  // carries is equal or worse. These pin that, because the tempting shape (carry it when both
+  // records name the same turn) reads correct and is not.
+  describe("live turn progress is never grafted from a stale update", () => {
+    it("does not let a stale same-turn count lower the one on screen", () => {
       const current: TestAgent = {
         updatedAt: NEWER,
         activeTurn: { turnId: "turn-7" },
-        activeTurnOutputTokens: 100,
+        activeTurnOutputTokens: 250,
         activeTurnIdleMs: 1_000,
       };
       const incoming: TestAgent = {
         updatedAt: OLDER,
         activeTurn: { turnId: "turn-7" },
-        activeTurnOutputTokens: 250,
+        activeTurnOutputTokens: 100,
         activeTurnIdleMs: 5_000,
       };
 
       const result = acceptAgentDirectoryUpdate(current, incoming);
 
       expect(result.activeTurnOutputTokens).toBe(250);
-      expect(result.activeTurnIdleMs).toBe(5_000);
+      expect(result.activeTurnIdleMs).toBe(1_000);
+    });
+
+    it("does not resurrect a count the current record has already cleared", () => {
+      // A provider that stops reporting mid-turn clears the slot. A late record from the same
+      // turn still carries the old number, and grafting it would freeze a dead count on screen.
+      const current: TestAgent = { updatedAt: NEWER, activeTurn: { turnId: "turn-7" } };
+      const incoming: TestAgent = {
+        updatedAt: OLDER,
+        activeTurn: { turnId: "turn-7" },
+        activeTurnOutputTokens: 100,
+      };
+
+      expect(acceptAgentDirectoryUpdate(current, incoming).activeTurnOutputTokens).toBeUndefined();
+    });
+
+    it("does not replace the idle duration or the instant it was measured", () => {
+      // These two move together or not at all: the client adds elapsed-since-receipt to the
+      // duration, so a stale pair reports silence that the newer record already contradicted.
+      const currentReceivedAt = new Date("2026-07-30T12:00:04.000Z");
+      const current: TestAgent = {
+        updatedAt: NEWER,
+        activeTurn: { turnId: "turn-7" },
+        activeTurnIdleMs: 0,
+        activeTurnIdleReceivedAt: currentReceivedAt,
+      };
+      const incoming: TestAgent = {
+        updatedAt: OLDER,
+        activeTurn: { turnId: "turn-7" },
+        activeTurnIdleMs: 120_000,
+        activeTurnIdleReceivedAt: new Date("2026-07-30T12:00:01.000Z"),
+      };
+
+      const result = acceptAgentDirectoryUpdate(current, incoming);
+
+      expect(result.activeTurnIdleMs).toBe(0);
+      expect(result.activeTurnIdleReceivedAt).toBe(currentReceivedAt);
     });
 
     it("leaves the current count untouched when the turns differ", () => {
-      // The whole point: a delayed update from turn 7 must never write its number onto the
-      // record for turn 8, which is the staleness this feature exists to avoid showing.
       const current: TestAgent = {
         updatedAt: NEWER,
         activeTurn: { turnId: "turn-8" },
         activeTurnOutputTokens: 12,
-        activeTurnIdleMs: 500,
       };
       const incoming: TestAgent = {
         updatedAt: OLDER,
         activeTurn: { turnId: "turn-7" },
         activeTurnOutputTokens: 9_999,
-        activeTurnIdleMs: 90_000,
       };
-
-      const result = acceptAgentDirectoryUpdate(current, incoming);
-
-      expect(result.activeTurnOutputTokens).toBe(12);
-      expect(result.activeTurnIdleMs).toBe(500);
-    });
-
-    it("leaves the current count untouched when the stale update has no turn id", () => {
-      const current: TestAgent = {
-        updatedAt: NEWER,
-        activeTurn: { turnId: "turn-8" },
-        activeTurnOutputTokens: 12,
-      };
-      const incoming: TestAgent = { updatedAt: OLDER, activeTurnOutputTokens: 9_999 };
 
       expect(acceptAgentDirectoryUpdate(current, incoming).activeTurnOutputTokens).toBe(12);
     });
 
-    it("leaves the current count untouched when neither record has a turn id", () => {
-      // Two undefined turn ids are not evidence of the same turn.
-      const current: TestAgent = { updatedAt: NEWER, activeTurnOutputTokens: 12 };
-      const incoming: TestAgent = { updatedAt: OLDER, activeTurnOutputTokens: 9_999 };
-
-      expect(acceptAgentDirectoryUpdate(current, incoming).activeTurnOutputTokens).toBe(12);
-    });
-
-    it("carries the receipt timestamp alongside the idle duration", () => {
-      const receivedAt = new Date("2026-07-30T12:00:03.000Z");
+    it("keeps progress when a stale update grafts usage forward", () => {
+      // The one thing a stale record may still contribute is `lastUsage`. Doing so must not
+      // disturb the progress fields riding on the record it is merged into.
       const current: TestAgent = {
         updatedAt: NEWER,
         activeTurn: { turnId: "turn-7" },
-        activeTurnIdleMs: 1_000,
-        activeTurnIdleReceivedAt: new Date("2026-07-30T12:00:01.000Z"),
-      };
-      const incoming: TestAgent = {
-        updatedAt: OLDER,
-        activeTurn: { turnId: "turn-7" },
-        activeTurnIdleMs: 4_000,
-        activeTurnIdleReceivedAt: receivedAt,
-      };
-
-      const result = acceptAgentDirectoryUpdate(current, incoming);
-
-      // The duration and the instant it was measured must move together, or the client would
-      // add elapsed-since-receipt to a duration captured at a different moment.
-      expect(result.activeTurnIdleMs).toBe(4_000);
-      expect(result.activeTurnIdleReceivedAt).toBe(receivedAt);
-    });
-
-    it("does not allocate a new record when a stale same-turn update changes nothing", () => {
-      const current: TestAgent = {
-        updatedAt: NEWER,
-        activeTurn: { turnId: "turn-7" },
-        activeTurnOutputTokens: 100,
-        activeTurnIdleMs: 1_000,
+        activeTurnOutputTokens: 250,
       };
       const incoming: TestAgent = {
         updatedAt: OLDER,
         activeTurn: { turnId: "turn-7" },
         activeTurnOutputTokens: 100,
-        activeTurnIdleMs: 1_000,
+        lastUsage: { inputTokens: 10 },
+      };
+
+      const result = acceptAgentDirectoryUpdate(current, incoming);
+
+      expect(result.lastUsage).toEqual({ inputTokens: 10 });
+      expect(result.activeTurnOutputTokens).toBe(250);
+    });
+
+    it("does not allocate a new record when a stale update carries only progress", () => {
+      const current: TestAgent = {
+        updatedAt: NEWER,
+        activeTurn: { turnId: "turn-7" },
+        activeTurnOutputTokens: 250,
+      };
+      const incoming: TestAgent = {
+        updatedAt: OLDER,
+        activeTurn: { turnId: "turn-7" },
+        activeTurnOutputTokens: 100,
       };
 
       expect(acceptAgentDirectoryUpdate(current, incoming)).toBe(current);
