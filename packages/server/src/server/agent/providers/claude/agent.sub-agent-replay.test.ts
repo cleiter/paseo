@@ -198,6 +198,34 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     expect(statuses).toContain("running");
   });
 
+  test("finishes a skill-spawned subagent the parent never named", async () => {
+    // The reported bug. A /code-review subagent has no Task tool_use, so its sidecar carries only
+    // agentType and its id appears nowhere in the parent — it used to replay as running forever,
+    // and every reopen resurrected it.
+    writeSession({
+      parentLines: [parentEntry([{ type: "text", text: "running /code-review" }])],
+      meta: JSON.stringify({ agentType: "general-purpose" }),
+    });
+
+    const events = upserts(await replayDescriptors());
+    expect(events[0]).toMatchObject({ id: AGENT_ID });
+    expect(events.at(-1)).toMatchObject({ id: AGENT_ID, status: "completed" });
+  });
+
+  test("finishes a subagent whose toolUseId names no Task call in this transcript", async () => {
+    // A grandchild recorded before spawnDepth existed: the Task call it names was made inside a
+    // sibling's session, so no tool_result for it can ever reach this parent.
+    writeSession({
+      parentLines: [parentEntry([{ type: "text", text: "no task calls here" }])],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID, agentType: "Explore" }),
+    });
+
+    expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({
+      id: TOOL_USE_ID,
+      status: "completed",
+    });
+  });
+
   test.each([
     ["truncated json", '{"toolUseId":"toolu_01DgLoPMW9"'],
     ["not json", "toolUseId: toolu"],

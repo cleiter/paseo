@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../../provider-history-timestamps.js";
+import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
 import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
 import { buildClaudeSubagentSubtitle, type ClaudeSubagentUsage } from "./presentation.js";
@@ -152,42 +153,89 @@ export interface ClaudeReplayParentFacts {
   outcomesByToolCallId: ReadonlyMap<string, { failed: boolean }>;
 }
 
-interface ResolvedLink {
+interface ParentLink {
   id: string;
   toolCallId: string | null;
-  failed: boolean | null;
+  /** Terminal status the parent implies, or null when the child may still be running. */
+  status: ProviderSubagentStatus | null;
 }
 
 /**
- * Resolve the canonical subagent id.
+ * Everything the parent transcript can say about one child: its canonical id and, when the parent
+ * settles the question, its terminal status.
  *
- * `meta.toolUseId` is authoritative: it is the same id the live stream keys on. The legacy path
- * scrapes `agentId:` out of stringified tool-result content, which both misses the link when the
- * parent's tool_result is absent and matches unrelated text — on a real five-subagent session it
- * produced eight ids, inventing `z`, `string`, and `update`. It stays only as a fallback for
- * sessions recorded before the meta file existed.
+ * `meta.toolUseId` is authoritative for identity — it is the same id the live stream keys on. The
+ * legacy path scrapes `agentId:` out of stringified tool-result content, which both misses the link
+ * when the parent's tool_result is absent and matches unrelated text — on a real five-subagent
+ * session it produced eight ids, inventing `z`, `string`, and `update`. It stays only as a fallback
+ * for sessions recorded before the meta file existed.
+ *
+ * ```
+ * meta.toolUseId present?
+ * ├─ yes → outcomesByToolCallId has it?
+ * │         ├─ hit, is_error   → "failed"       id = toolCallId = toolUseId
+ * │         ├─ hit, ok         → "completed"    id = toolCallId = toolUseId
+ * │         └─ miss → parent.toolCalls has it?
+ * │                   ├─ yes   → null           interrupted mid-Task; a resume
+ * │                   │                         may still finish it — keep running
+ * │                   └─ no    → "completed"    no Task call ⇒ nothing in the parent
+ * │                                             can ever name it
+ * └─ no  → linksByAgentId (legacy scrape) hit?
+ *           ├─ hit, failed     → "failed"       id = toolCallId = scraped id
+ *           ├─ hit, ok         → "completed"
+ *           └─ miss            → "completed"    id = agentId, toolCallId = null
+ * ```
+ *
+ * Outcomes are only ever recorded for a child whose Task call was parsed out of the parent
+ * (`agent.ts` skips any tool_result whose id is not in `toolCalls`). So a child with no Task call
+ * is one no reader can finish: across every such transcript recorded on a real machine, no
+ * `tool_result` for it exists in the parent at all. Calling it completed is the only status that
+ * does not strand it as running forever. A child that *does* have a Task call but no result yet is
+ * the opposite case — the parent was interrupted mid-Task — and keeps running.
  */
-function resolveLink(
+function resolveParentLink(
   subagent: ClaudeReplaySubagentInput,
   parent: ClaudeReplayParentFacts,
-): ResolvedLink {
+): ParentLink {
   const metaToolUseId = subagent.meta?.toolUseId?.trim();
   if (metaToolUseId) {
     const outcome = parent.outcomesByToolCallId.get(metaToolUseId);
+    if (outcome) {
+      return {
+        id: metaToolUseId,
+        toolCallId: metaToolUseId,
+        status: outcome.failed ? "failed" : "completed",
+      };
+    }
     return {
       id: metaToolUseId,
       toolCallId: metaToolUseId,
-      failed: outcome ? outcome.failed : null,
+      status: parent.toolCalls.has(metaToolUseId) ? null : "completed",
     };
   }
 
   const scraped = parent.linksByAgentId.get(subagent.agentId);
   if (scraped) {
-    return { id: scraped.toolCallId, toolCallId: scraped.toolCallId, failed: scraped.failed };
+    return {
+      id: scraped.toolCallId,
+      toolCallId: scraped.toolCallId,
+      status: scraped.failed ? "failed" : "completed",
+    };
   }
 
-  // No link at all: keep the subagent visible under its own agent id rather than dropping it.
-  return { id: subagent.agentId, toolCallId: null, failed: null };
+  // No link at all. `parseClaudeSubagentMeta` collapses absent, malformed, and pre-sidecar metadata
+  // into the same null, so all of those land here beside a genuine skill-spawned child: a
+  // `/code-review` subagent has no Task tool_use to name, so its sidecar carries only `agentType`
+  // and its id appears nowhere in the parent. Keep it visible under its own agent id rather than
+  // dropping it — the transcript is real and readable.
+  //
+  // Known asymmetry: `live-source.ts` drops any announced task with no `tool_use_id`, so the live
+  // path cannot declare a skill-spawned child and only replay produces this row. That is in tension
+  // with the live/replay parity claim in `agent.ts`. Keeping the row is the reversible direction;
+  // hiding a real transcript is not. If Claude Code ever does send a `tool_use_id` on the live
+  // frame, this becomes an identity split — live would key the row by that id while replay keys it
+  // by the raw agent id — and archive state would stop sticking across a reopen.
+  return { id: subagent.agentId, toolCallId: null, status: "completed" };
 }
 
 /**
@@ -196,7 +244,7 @@ function resolveLink(
  */
 function declareSubagent(
   subagent: ClaudeReplaySubagentInput,
-  link: ResolvedLink,
+  link: ParentLink,
   toolCall: { title?: string; description?: string } | undefined,
 ): SubagentObservation {
   const title = toolCall?.title ?? subagent.meta?.agentType;
@@ -214,7 +262,7 @@ function declareSubagent(
 
 function observeSubtitle(
   subagent: ClaudeReplaySubagentInput,
-  link: ResolvedLink,
+  link: ParentLink,
   title: string | undefined,
 ): SubagentObservation | null {
   const runtime = readRuntime(subagent.entries);
@@ -244,7 +292,7 @@ function observeSubagent(
   parent: ClaudeReplayParentFacts,
   convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[],
 ): SubagentObservation[] {
-  const link = resolveLink(subagent, parent);
+  const link = resolveParentLink(subagent, parent);
   const toolCall = link.toolCallId ? parent.toolCalls.get(link.toolCallId) : undefined;
 
   const observations: SubagentObservation[] = [declareSubagent(subagent, link, toolCall)];
@@ -263,14 +311,15 @@ function observeSubagent(
     }
   }
 
-  // A transcript with no recorded outcome is a subagent that never finished — leave it running
-  // rather than inventing a completion.
-  if (link.failed !== null) {
+  // No terminal status means the parent was interrupted mid-Task, so leave the child running rather
+  // than inventing a completion. The timestamp is the child's last entry, so a finished row sorts
+  // at the time it actually stopped rather than at reopen.
+  if (link.status) {
     const lastTimestamp = normalizeProviderReplayTimestamp(subagent.entries.at(-1)?.timestamp);
     observations.push({
       kind: "status",
       id: link.id,
-      status: link.failed ? "failed" : "completed",
+      status: link.status,
       ...(lastTimestamp ? { timestamp: lastTimestamp } : {}),
     });
   }
@@ -286,9 +335,8 @@ function observeSubagent(
  * another subagent. A grandchild's `toolUseId` names a Task call made inside its parent's session,
  * so nothing in this transcript can resolve it — surveyed across recorded sessions, every depth-1
  * id matched a Task tool_use block in the parent transcript and no deeper id did. Replaying them
- * anyway adds rows the live stream never showed, each with no Task card and no recoverable
- * outcome, which leaves them running forever. One session recorded 10 subagents live and would
- * replay 22.
+ * anyway adds rows the live stream never showed, each with no Task card and no recoverable outcome.
+ * One session recorded 10 subagents live and would replay 22.
  *
  * Absent depth means a session recorded before the field existed: keep the subagent rather than
  * lose it, matching how every other missing field here is treated.
