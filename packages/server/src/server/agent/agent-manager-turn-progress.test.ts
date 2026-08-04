@@ -392,4 +392,40 @@ describe("live turn progress is cleared at every turn boundary", () => {
       harness.cleanup();
     }
   });
+
+  test("every progress change strictly advances updatedAt", async () => {
+    const harness = await createHarness();
+    try {
+      const stream = harness.manager.streamAgent(harness.agentId, "hello");
+      const first = stream.next();
+      await drainEventQueue();
+
+      const beforeCount = harness.manager.getAgent(harness.agentId);
+      if (!beforeCount) throw new Error("agent is gone");
+      const beforeCountMs = beforeCount.updatedAt.getTime();
+
+      harness.session.pushEvent(usageUpdated("turn-1", 777));
+      await drainEventQueue();
+
+      const counted = harness.manager.getAgent(harness.agentId);
+      if (!counted) throw new Error("agent is gone");
+      expect(counted.activeTurnOutputTokens).toBe(777);
+      // The client orders directory updates by `updatedAt` and takes the incoming record on a
+      // tie. Two snapshots that disagree about progress at one timestamp would let whichever
+      // arrives last win, so a delayed record could put a dead count back on screen.
+      expect(counted.updatedAt.getTime()).toBeGreaterThan(beforeCountMs);
+
+      harness.session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-1" });
+      await drainEventQueue();
+      await first;
+      await stream.return(undefined);
+
+      const cleared = harness.manager.getAgent(harness.agentId);
+      if (!cleared) throw new Error("agent is gone");
+      expect(cleared.activeTurnOutputTokens).toBeUndefined();
+      expect(cleared.updatedAt.getTime()).toBeGreaterThan(counted.updatedAt.getTime());
+    } finally {
+      harness.cleanup();
+    }
+  });
 });

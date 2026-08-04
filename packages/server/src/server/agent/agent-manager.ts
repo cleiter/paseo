@@ -796,6 +796,12 @@ export class AgentManager {
     // A boundary is itself an activity instant: a turn that just started has been silent for
     // zero milliseconds, not for however long the gap before it was.
     agent.lastStreamActivityAt = new Date();
+    // Progress mutations must strictly advance `updatedAt` — see `touchUpdatedAt`. The client
+    // orders directory updates by it and takes the incoming record on a tie, so two snapshots
+    // that disagree about progress at the same timestamp let whichever arrives last win. Most
+    // clears already ride a stream event that bumped it, but `finalizeForegroundTurn` clears
+    // without one when it holds the agent busy for a replacement turn.
+    this.touchUpdatedAt(agent);
   }
 
   private touchUpdatedAt(agent: ManagedAgent): Date {
@@ -3641,6 +3647,9 @@ export class AgentManager {
         // Assign unconditionally, including undefined: a provider that stops reporting
         // mid-turn should make the count disappear rather than freeze on a stale value.
         agent.activeTurnOutputTokens = event.activeTurnOutputTokens;
+        // Redundant for a live event, which `handleStreamEvent` already stamped, but history
+        // replay skips that and would otherwise emit a changed count on an unchanged timestamp.
+        this.touchUpdatedAt(agent);
         this.emitState(agent);
         return undefined;
       case "mode_changed":
