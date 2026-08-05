@@ -1,6 +1,7 @@
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import {
+  createCodeClipboardContent,
   createMarkdownClipboardContent,
   type MarkdownClipboardContent,
 } from "@/utils/rich-clipboard";
@@ -14,6 +15,8 @@ import {
 } from "./markup";
 
 const ASSISTANT_MESSAGE_SELECTOR = '[data-testid="assistant-message"]';
+const CODE_BLOCK_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="pre"]`;
+const CODE_REGION_SELECTOR = `${CODE_BLOCK_SELECTOR}, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="code"]`;
 
 const turndown = new TurndownService({
   bulletListMarker: "-",
@@ -65,6 +68,11 @@ export function createAssistantSelectionClipboardContent(
     return null;
   }
 
+  const codeSelection = createCodeSelectionContent(range, startMessage);
+  if (codeSelection) {
+    return codeSelection;
+  }
+
   const container = document.createElement("div");
   const selected = wrapSelectionWithAncestors(range, startMessage);
   normalizeOrderedListStarts(selected, range, startMessage);
@@ -73,6 +81,70 @@ export function createAssistantSelectionClipboardContent(
 
   const markdown = turndown.turndown(container.innerHTML).trim();
   return markdown ? createMarkdownClipboardContent(markdown) : null;
+}
+
+/**
+ * Selections that sit entirely inside rendered code copy as the code itself.
+ *
+ * The Markdown path below would fence them: a partial selection carries no
+ * ancestors of its own, so `wrapSelectionWithAncestors` rebuilds the `pre`/`code`
+ * chain and Turndown emits a whole fence around whatever was highlighted. Nobody
+ * highlights part of a code block wanting fence syntax — they want what the
+ * block's own Copy button gives.
+ *
+ * Returns null when the selection is not code, or is empty, so the caller falls
+ * through to the Markdown path.
+ */
+function createCodeSelectionContent(
+  range: Range,
+  message: Element,
+): MarkdownClipboardContent | null {
+  const region = closestCodeRegion(range.commonAncestorContainer, message);
+  if (!region) {
+    return null;
+  }
+
+  const code = selectedCodeText(range);
+  if (!code) {
+    return null;
+  }
+
+  // `closest` stops at the inner `code` span, but the fence language lives on the
+  // outer `pre` wrapper.
+  const fence = region.closest(CODE_BLOCK_SELECTOR);
+
+  // Block vs inline is an affordance call, not a semantic one. A multi-line
+  // snippet earns a code block; a double-clicked identifier should land in a rich
+  // editor as inline code rather than as a paragraph-breaking block. A selection
+  // without a newline may still have come from a fence — that is the trade.
+  const block = Boolean(fence) && code.includes("\n");
+  return createCodeClipboardContent(code, {
+    language: fence?.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE),
+    block,
+  });
+}
+
+function closestCodeRegion(node: Node, message: Element): Element | null {
+  const element = node instanceof Element ? node : node.parentElement;
+  const region = element?.closest(CODE_REGION_SELECTOR) ?? null;
+  if (!region || !message.contains(region)) {
+    return null;
+  }
+  // A selection sitting entirely inside the block's own hover Copy button is not
+  // code. `cloneContents` of a single text node drops the ignore marker with the
+  // element that carried it, so this has to be asked of the live DOM.
+  return element?.closest(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`) ? null : region;
+}
+
+function selectedCodeText(range: Range): string {
+  const fragment = range.cloneContents();
+  // The hover Copy button lives inside the `pre`, so selecting the whole block
+  // sweeps it up too.
+  for (const ignored of fragment.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {
+    ignored.remove();
+  }
+  // Deliberately untrimmed — leading indentation is part of the code.
+  return fragment.textContent ?? "";
 }
 
 function wrapSelectionWithAncestors(range: Range, message: Element): Node {

@@ -26,6 +26,41 @@ export function createMarkdownClipboardContent(markdown: string): MarkdownClipbo
   };
 }
 
+export interface CodeClipboardOptions {
+  language?: string | null;
+  /** Fenced block markup when true, inline `<code>` when false. */
+  block: boolean;
+}
+
+/**
+ * Clipboard payload for a selection that lies entirely inside rendered code.
+ *
+ * `plainText` is the code exactly as it was selected — no fences, no backticks —
+ * so it pastes straight into a shell or editor. The html half keeps the code
+ * marked up for rich targets.
+ *
+ * The fence info string is agent-authored, so the language is escaped as an
+ * attribute value rather than interpolated raw.
+ */
+export function createCodeClipboardContent(
+  code: string,
+  options: CodeClipboardOptions,
+): MarkdownClipboardContent {
+  const escapedCode = markdownRenderer.utils.escapeHtml(code);
+  if (!options.block) {
+    return { plainText: code, html: `<meta charset="utf-8"><code>${escapedCode}</code>` };
+  }
+
+  const language = options.language?.trim();
+  const className = language
+    ? ` class="language-${markdownRenderer.utils.escapeHtml(language)}"`
+    : "";
+  return {
+    plainText: code,
+    html: `<meta charset="utf-8"><pre><code${className}>${escapedCode}</code></pre>`,
+  };
+}
+
 export async function writeMarkdownToRichClipboard(
   markdown: string,
   environment: MarkdownClipboardEnvironment,

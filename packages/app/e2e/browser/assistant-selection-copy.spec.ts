@@ -309,6 +309,28 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(columnSliceClipboard.html).not.toContain("<table>");
     expect(columnSliceClipboard.html).toContain("ready");
     expect(columnSliceClipboard.html).toContain("<s>obsolete</s>");
+
+    await selectAssistantText(page, "answer");
+    await copySelection(page);
+
+    const wordInFenceClipboard = await readRichClipboard(page);
+    expect(wordInFenceClipboard.plainText).toBe("answer");
+    expect(wordInFenceClipboard.html).toContain("<code>answer</code>");
+    expect(wordInFenceClipboard.html).not.toContain("<pre>");
+
+    await selectAssistantTextRange(page, "before", "after");
+    await copySelection(page);
+
+    const fenceLinesClipboard = await readRichClipboard(page);
+    expect(fenceLinesClipboard.plainText).toBe("before\n```\nafter");
+    expect(fenceLinesClipboard.html).toContain('<pre><code class="language-text">');
+
+    await selectAssistantText(page, "apply");
+    await copySelection(page);
+
+    const inlineCodeClipboard = await readRichClipboard(page);
+    expect(inlineCodeClipboard.plainText).toBe("apply");
+    expect(inlineCodeClipboard.html).toContain("<code>apply</code>");
   } finally {
     await agent.cleanup();
   }
