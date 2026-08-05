@@ -222,8 +222,8 @@ function readChildTerminalStatus(
 }
 
 /**
- * The parent's tool input is the same source the live path reads, so it wins; meta.json fills the
- * gap when the parent's Task call is missing from the transcript.
+ * The parent's tool input is the same identity source the live path reads; meta.json contributes
+ * provider details only after that declaration has admitted the child.
  */
 function declareSubagent(
   subagent: ClaudeReplaySubagentInput,

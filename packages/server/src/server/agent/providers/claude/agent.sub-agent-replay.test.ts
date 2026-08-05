@@ -57,11 +57,11 @@ function taskToolResult(options: { isError?: boolean; mentionAgentId?: boolean }
   });
 }
 
-function sidechainEntry(options: { stopReason?: string | null } = {}): string {
+function sidechainEntry(options: { agentId?: string; stopReason?: string | null } = {}): string {
   return JSON.stringify({
     type: "assistant",
     isSidechain: true,
-    agentId: AGENT_ID,
+    agentId: options.agentId ?? AGENT_ID,
     sessionId: "replay-session",
     timestamp: "2026-07-26T06:27:50.000Z",
     message: {
@@ -81,24 +81,40 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
   let cwd: string;
   let configDir: string;
 
+  function writeParentSession(parentLines: string[]): string {
+    const historyDir = claudeProjectDirSync(cwd, { configDir });
+    mkdirSync(historyDir, { recursive: true });
+    writeFileSync(path.join(historyDir, "replay-session.jsonl"), parentLines.join("\n"));
+    return path.join(historyDir, "replay-session", "subagents");
+  }
+
+  function writeSubagent(options: {
+    subagentDir: string;
+    agentId?: string;
+    meta?: string | null;
+    sidechainLines?: string[];
+  }): void {
+    const agentId = options.agentId ?? AGENT_ID;
+    mkdirSync(options.subagentDir, { recursive: true });
+    writeFileSync(
+      path.join(options.subagentDir, `agent-${agentId}.jsonl`),
+      (options.sidechainLines ?? [sidechainEntry({ agentId })]).join("\n"),
+    );
+    if (options.meta !== null && options.meta !== undefined) {
+      writeFileSync(path.join(options.subagentDir, `agent-${agentId}.meta.json`), options.meta);
+    }
+  }
+
   function writeSession(options: {
     parentLines: string[];
     meta?: string | null;
     sidechainLines?: string[];
   }): void {
-    const historyDir = claudeProjectDirSync(cwd, { configDir });
-    mkdirSync(historyDir, { recursive: true });
-    writeFileSync(path.join(historyDir, "replay-session.jsonl"), options.parentLines.join("\n"));
-
-    const subagentDir = path.join(historyDir, "replay-session", "subagents");
-    mkdirSync(subagentDir, { recursive: true });
-    writeFileSync(
-      path.join(subagentDir, `agent-${AGENT_ID}.jsonl`),
-      (options.sidechainLines ?? [sidechainEntry()]).join("\n"),
-    );
-    if (options.meta !== null && options.meta !== undefined) {
-      writeFileSync(path.join(subagentDir, `agent-${AGENT_ID}.meta.json`), options.meta);
-    }
+    writeSubagent({
+      subagentDir: writeParentSession(options.parentLines),
+      meta: options.meta,
+      sidechainLines: options.sidechainLines,
+    });
   }
 
   async function replayDescriptors(): Promise<
@@ -224,6 +240,31 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       meta: JSON.stringify({ agentType: "general-purpose" }),
       sidechainLines: [sidechainEntry({ stopReason: "end_turn" })],
     });
+
+    expect(upserts(await replayDescriptors())).toEqual([]);
+  });
+
+  test("does not accumulate internal workflow agents as replay-only running rows", async () => {
+    const subagentRoot = writeParentSession([
+      parentEntry([
+        {
+          type: "tool_use",
+          id: "toolu_workflow",
+          name: "Workflow",
+          input: { script: "await Promise.all([agent('one'), agent('two'), agent('three')])" },
+        },
+      ]),
+    ]);
+    const workflowDir = path.join(subagentRoot, "workflows", "wf_c240e728-6ea");
+
+    for (const agentId of ["a17a341a0902f5799", "ae2d01ba2dfa46032", "abc9f20546c326c53"]) {
+      writeSubagent({
+        subagentDir: workflowDir,
+        agentId,
+        meta: JSON.stringify({ agentType: "workflow-subagent", spawnDepth: 1 }),
+        sidechainLines: [sidechainEntry({ agentId, stopReason: "end_turn" })],
+      });
+    }
 
     expect(upserts(await replayDescriptors())).toEqual([]);
   });
