@@ -155,14 +155,13 @@ export interface ClaudeReplayParentFacts {
 
 interface ParentLink {
   id: string;
-  toolCallId: string | null;
-  /** Terminal status the parent implies, or null when the child may still be running. */
+  toolCallId: string;
+  /** Terminal status recorded by the parent, or null when its Task has no outcome yet. */
   status: ProviderSubagentStatus | null;
 }
 
 /**
- * Everything the parent transcript can say about one child: its canonical id and, when the parent
- * settles the question, its terminal status.
+ * Resolve a child only when the parent transcript declares the corresponding Task.
  *
  * `meta.toolUseId` is authoritative for identity — it is the same id the live stream keys on. The
  * legacy path scrapes `agentId:` out of stringified tool-result content, which both misses the link
@@ -171,51 +170,35 @@ interface ParentLink {
  * for sessions recorded before the meta file existed.
  *
  * ```
- * meta.toolUseId present?
- * ├─ yes → outcomesByToolCallId has it?
- * │         ├─ hit, is_error   → "failed"       id = toolCallId = toolUseId
- * │         ├─ hit, ok         → "completed"    id = toolCallId = toolUseId
- * │         └─ miss → parent.toolCalls has it?
- * │                   ├─ yes   → null           interrupted mid-Task; a resume
- * │                   │                         may still finish it — keep running
- * │                   └─ no    → "completed"    no Task call ⇒ nothing in the parent
- * │                                             can ever name it
- * └─ no  → linksByAgentId (legacy scrape) hit?
- *           ├─ hit, failed     → "failed"       id = toolCallId = scraped id
- *           ├─ hit, ok         → "completed"
- *           └─ miss            → "completed"    id = agentId, toolCallId = null
+ * meta.toolUseId matches a parent Task?
+ * ├─ yes → use it and the parent's outcome, when present
+ * └─ no  → a legacy scraped agentId link matches a parent Task?
+ *           ├─ yes → use it and its recorded outcome
+ *           └─ no  → drop it; live never declared this child either
  * ```
  *
- * Outcomes are only ever recorded for a child whose Task call was parsed out of the parent
- * (`agent.ts` skips any tool_result whose id is not in `toolCalls`). So a child with no Task call
- * is one no reader can finish: across every such transcript recorded on a real machine, no
- * `tool_result` for it exists in the parent at all. Calling it completed is the only status that
- * does not strand it as running forever. A child that *does* have a Task call but no result yet is
- * the opposite case — the parent was interrupted mid-Task — and keeps running.
+ * Claude writes grandchildren and skill-owned sidechains beside direct children. Admitting those
+ * without a parent Task creates replay-only rows with no identity or lifecycle source. Filtering
+ * here keeps live and replay on the same declaration boundary.
  */
 function resolveParentLink(
   subagent: ClaudeReplaySubagentInput,
   parent: ClaudeReplayParentFacts,
-): ParentLink {
+): ParentLink | null {
   const metaToolUseId = subagent.meta?.toolUseId?.trim();
-  if (metaToolUseId) {
+  if (metaToolUseId && parent.toolCalls.has(metaToolUseId)) {
     const outcome = parent.outcomesByToolCallId.get(metaToolUseId);
-    if (outcome) {
-      return {
-        id: metaToolUseId,
-        toolCallId: metaToolUseId,
-        status: outcome.failed ? "failed" : "completed",
-      };
-    }
+    let status: ProviderSubagentStatus | null = null;
+    if (outcome) status = outcome.failed ? "failed" : "completed";
     return {
       id: metaToolUseId,
       toolCallId: metaToolUseId,
-      status: parent.toolCalls.has(metaToolUseId) ? null : "completed",
+      status,
     };
   }
 
   const scraped = parent.linksByAgentId.get(subagent.agentId);
-  if (scraped) {
+  if (scraped && parent.toolCalls.has(scraped.toolCallId)) {
     return {
       id: scraped.toolCallId,
       toolCallId: scraped.toolCallId,
@@ -223,19 +206,19 @@ function resolveParentLink(
     };
   }
 
-  // No link at all. `parseClaudeSubagentMeta` collapses absent, malformed, and pre-sidecar metadata
-  // into the same null, so all of those land here beside a genuine skill-spawned child: a
-  // `/code-review` subagent has no Task tool_use to name, so its sidecar carries only `agentType`
-  // and its id appears nowhere in the parent. Keep it visible under its own agent id rather than
-  // dropping it — the transcript is real and readable.
-  //
-  // Known asymmetry: `live-source.ts` drops any announced task with no `tool_use_id`, so the live
-  // path cannot declare a skill-spawned child and only replay produces this row. That is in tension
-  // with the live/replay parity claim in `agent.ts`. Keeping the row is the reversible direction;
-  // hiding a real transcript is not. If Claude Code ever does send a `tool_use_id` on the live
-  // frame, this becomes an identity split — live would key the row by that id while replay keys it
-  // by the raw agent id — and archive state would stop sticking across a reopen.
-  return { id: subagent.agentId, toolCallId: null, status: "completed" };
+  return null;
+}
+
+/** A final `end_turn` is the child's own completion signal when the parent result is absent. */
+function readChildTerminalStatus(
+  entries: readonly ClaudeReplayEntry[],
+): ProviderSubagentStatus | null {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (entry?.type !== "assistant") continue;
+    return entry.message?.stop_reason === "end_turn" ? "completed" : null;
+  }
+  return null;
 }
 
 /**
@@ -293,7 +276,8 @@ function observeSubagent(
   convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[],
 ): SubagentObservation[] {
   const link = resolveParentLink(subagent, parent);
-  const toolCall = link.toolCallId ? parent.toolCalls.get(link.toolCallId) : undefined;
+  if (!link) return [];
+  const toolCall = parent.toolCalls.get(link.toolCallId);
 
   const observations: SubagentObservation[] = [declareSubagent(subagent, link, toolCall)];
   const subtitle = observeSubtitle(subagent, link, toolCall?.title ?? subagent.meta?.agentType);
@@ -311,15 +295,15 @@ function observeSubagent(
     }
   }
 
-  // No terminal status means the parent was interrupted mid-Task, so leave the child running rather
-  // than inventing a completion. The timestamp is the child's last entry, so a finished row sorts
-  // at the time it actually stopped rather than at reopen.
-  if (link.status) {
+  // Prefer the parent's result because it carries failure. If that result is missing, the child's
+  // final end_turn still proves completion. Any other shape remains running.
+  const terminalStatus = link.status ?? readChildTerminalStatus(subagent.entries);
+  if (terminalStatus) {
     const lastTimestamp = normalizeProviderReplayTimestamp(subagent.entries.at(-1)?.timestamp);
     observations.push({
       kind: "status",
       id: link.id,
-      status: link.status,
+      status: terminalStatus,
       ...(lastTimestamp ? { timestamp: lastTimestamp } : {}),
     });
   }
