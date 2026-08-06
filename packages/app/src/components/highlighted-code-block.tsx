@@ -82,7 +82,9 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const controlsVisible = isHovered || isNative || isCompact;
-  const getCode = useCallback(() => code, [code]);
+  // Copy what is rendered, not the raw fence body: a Markdown fence ends in a
+  // newline, and pasting that into a terminal executes the last line.
+  const getCode = useCallback(() => renderedCode, [renderedCode]);
 
   return (
     <View

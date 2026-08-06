@@ -177,6 +177,11 @@ async function copySelection(page: Page): Promise<void> {
   await page.keyboard.press("ControlOrMeta+c");
 }
 
+/** The Copy button writes text/plain only, so the rich reader would throw on it. */
+async function readPlainClipboard(page: Page): Promise<string> {
+  return page.evaluate(() => navigator.clipboard.readText());
+}
+
 async function readRichClipboard(page: Page): Promise<ClipboardContent> {
   return page.evaluate(async () => {
     const items = await navigator.clipboard.read();
@@ -371,6 +376,15 @@ test("copying an assistant selection preserves Markdown structure and links", as
 
     const wholeLineClipboard = await readRichClipboard(page);
     expect(wholeLineClipboard.plainText).toBe('const answer = "yes";');
+
+    // Same hazard from the block's own Copy button: a Markdown fence body ends in a
+    // newline, and the button used to copy it raw.
+    const typescriptFence = assistantMessage.locator('[data-paseo-markdown-language="typescript"]');
+    // The button is opacity 0 / pointerEvents none until the fence is hovered.
+    await typescriptFence.hover();
+    await typescriptFence.locator("[data-paseo-markdown-ignore]").click();
+
+    expect(await readPlainClipboard(page)).toBe('const answer = "yes";\n  return answer;');
 
     await selectAssistantText(page, "apply");
     await copySelection(page);
