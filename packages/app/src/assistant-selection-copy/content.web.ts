@@ -1,6 +1,7 @@
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import {
+  createCodeClipboardContent,
   createMarkdownClipboardContent,
   type MarkdownClipboardContent,
 } from "@/utils/rich-clipboard";
@@ -14,6 +15,8 @@ import {
 } from "./markup";
 
 const ASSISTANT_MESSAGE_SELECTOR = '[data-testid="assistant-message"]';
+const CODE_BLOCK_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="pre"]`;
+const CODE_REGION_SELECTOR = `${CODE_BLOCK_SELECTOR}, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="code"]`;
 
 const turndown = new TurndownService({
   bulletListMarker: "-",
@@ -65,6 +68,11 @@ export function createAssistantSelectionClipboardContent(
     return null;
   }
 
+  const partialCode = createPartialCodeContent(range, startMessage);
+  if (partialCode) {
+    return partialCode;
+  }
+
   const container = document.createElement("div");
   const selected = cloneMarkdownSelection(range, startMessage);
   container.append(selected);
@@ -76,6 +84,68 @@ export function createAssistantSelectionClipboardContent(
   }
   const content = createMarkdownClipboardContent(markdown);
   return { ...content, html: flattenClipboardListMarkup(content.html) };
+}
+
+/**
+ * Partly-selected code copies as the code itself, never through Turndown.
+ *
+ * `removeUnselectedSemantics` strips the `pre`/`code` tags from a partial selection,
+ * which is right for the Markdown syntax but leaves the code being serialized as
+ * prose: Turndown collapses the indentation and the line breaks, and escapes
+ * Markdown-significant characters inside it. Two selected lines arrive as one.
+ *
+ * Fully selected regions are left alone — they still produce a fence, which is what
+ * `hasSelectedAllContents` was already deciding for the Markdown path.
+ */
+function createPartialCodeContent(range: Range, message: Element): MarkdownClipboardContent | null {
+  const region = closestCodeRegion(range.commonAncestorContainer, message);
+  if (!region || hasSelectedAllContents(range, region)) {
+    return null;
+  }
+
+  const code = selectedCodeText(range);
+  if (!code) {
+    return null;
+  }
+
+  // `closest` stops at the inner `code` span, but the fence language lives on the
+  // outer `pre` wrapper.
+  const fence = region.closest(CODE_BLOCK_SELECTOR);
+
+  // Only multi-line code earns markup in the html half, and only because HTML would
+  // otherwise collapse the newlines. A single line stays undecorated, like every
+  // other partial selection.
+  const block = Boolean(fence) && code.includes("\n");
+  return createCodeClipboardContent(code, {
+    language: fence?.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE),
+    block,
+  });
+}
+
+function closestCodeRegion(node: Node, message: Element): Element | null {
+  const element = node instanceof Element ? node : node.parentElement;
+  const region = element?.closest(CODE_REGION_SELECTOR) ?? null;
+  if (!region || !message.contains(region)) {
+    return null;
+  }
+  // A selection sitting entirely inside the block's own hover Copy button is not
+  // code. `cloneContents` of a single text node drops the ignore marker with the
+  // element that carried it, so this has to be asked of the live DOM.
+  return element?.closest(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`) ? null : region;
+}
+
+function selectedCodeText(range: Range): string {
+  const fragment = range.cloneContents();
+  // The hover Copy button lives inside the `pre`, so a selection that reaches the
+  // end of the block sweeps it up too.
+  for (const ignored of fragment.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {
+    ignored.remove();
+  }
+  // Deliberately untrimmed — leading indentation is part of the code. A trailing
+  // line break is the exception: newlines are their own text nodes between rendered
+  // lines, and a double click on the last word of a line sweeps one in. Pasting that
+  // into a terminal runs the line.
+  return (fragment.textContent ?? "").replace(/\r?\n[ \t]*$/, "");
 }
 
 function flattenClipboardListMarkup(html: string): string {

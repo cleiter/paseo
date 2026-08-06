@@ -36,6 +36,7 @@ const ASSISTANT_MARKDOWN = [
   "",
   "```typescript",
   'const answer = "yes";',
+  "  return answer;",
   "```",
   "",
   "````text",
@@ -134,8 +135,64 @@ async function selectAssistantTextRange(
   );
 }
 
+/**
+ * Select from `startText` into the middle of the next rendered code line.
+ *
+ * Highlighted code splits a line across one text node per syntax token and puts the
+ * newline in a node of its own, so this is a partial selection that crosses a line
+ * break — the shape whose whitespace Turndown would collapse.
+ */
+async function selectAssistantAcrossCodeLines(
+  page: Page,
+  startText: string,
+  endText: string,
+): Promise<void> {
+  const assistantMessage = page.getByTestId("assistant-message").filter({
+    hasText: "Direct matches:",
+  });
+  await assistantMessage.evaluate(
+    (element, selectedRange) => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let startNode: Node | null = null;
+      let startOffset = -1;
+      let textNode = walker.nextNode();
+      while (textNode) {
+        if (!startNode) {
+          const offset = textNode.textContent?.indexOf(selectedRange.startText) ?? -1;
+          if (offset >= 0) {
+            startNode = textNode;
+            startOffset = offset;
+          }
+          textNode = walker.nextNode();
+          continue;
+        }
+        const endOffset = textNode.textContent?.indexOf(selectedRange.endText) ?? -1;
+        if (endOffset >= 0) {
+          const range = document.createRange();
+          range.setStart(startNode, startOffset);
+          range.setEnd(textNode, endOffset + selectedRange.endText.length);
+          const selection = window.getSelection();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          return;
+        }
+        textNode = walker.nextNode();
+      }
+      throw new Error(
+        `Could not find a code range: ${selectedRange.startText} — ${selectedRange.endText}`,
+      );
+    },
+    { startText, endText },
+  );
+}
+
 async function copySelection(page: Page): Promise<void> {
   await page.keyboard.press("ControlOrMeta+c");
+}
+
+/** The Copy button writes text/plain only, so the rich reader would throw on it. */
+async function readPlainClipboard(page: Page): Promise<string> {
+  return page.evaluate(() => navigator.clipboard.readText());
 }
 
 async function readRichClipboard(page: Page): Promise<ClipboardContent> {
@@ -329,6 +386,32 @@ test("copying an assistant selection preserves Markdown structure and links", as
     expect(columnSliceClipboard.html).not.toContain("<table>");
     expect(columnSliceClipboard.html).toContain("ready");
     expect(columnSliceClipboard.html).toContain("<s>obsolete</s>");
+
+    // A partial selection loses its `pre` wrapper, so the code reaches Turndown as
+    // prose unless it is diverted first: the line break and the indentation go, and
+    // Markdown-significant characters get escaped.
+    await selectAssistantAcrossCodeLines(page, "const", "return");
+    await copySelection(page);
+
+    const codeLinesClipboard = await readRichClipboard(page);
+    expect(codeLinesClipboard.plainText).toBe('const answer = "yes";\n  return');
+    expect(codeLinesClipboard.html).toContain('<pre><code class="language-typescript">');
+
+    // Selecting a whole line runs off its end into the newline node. A trailing
+    // newline auto-executes the line when it is pasted into a terminal.
+    await selectAssistantAcrossCodeLines(page, "const", "  ");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe('const answer = "yes";');
+
+    // The block's own Copy button had the same hazard: a Markdown fence body ends in
+    // a newline, and the button copied it raw.
+    const typescriptFence = assistantMessage.locator('[data-paseo-markdown-language="typescript"]');
+    // The button is opacity 0 / pointerEvents none until the fence is hovered.
+    await typescriptFence.hover();
+    await typescriptFence.locator("[data-paseo-markdown-ignore]").click();
+
+    expect(await readPlainClipboard(page)).toBe('const answer = "yes";\n  return answer;');
   } finally {
     await agent.cleanup();
   }
