@@ -70,6 +70,14 @@ function el(
 
 /** The single text node whose content is exactly `text`. */
 function textNode(root: Node, text: string): Text {
+  const matches = textNodes(root, text);
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one text node "${text}", found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+function textNodes(root: Node, text: string): Text[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const matches: Text[] = [];
   while (walker.nextNode()) {
@@ -77,10 +85,17 @@ function textNode(root: Node, text: string): Text {
       matches.push(walker.currentNode as Text);
     }
   }
-  if (matches.length !== 1) {
-    throw new Error(`Expected exactly one text node "${text}", found ${matches.length}`);
+  return matches;
+}
+
+/** The standalone `\n` node that separates rendered code line `index` from the next. */
+function lineBreakNode(root: Node, index: number): Text {
+  const breaks = textNodes(root, "\n");
+  const node = breaks[index];
+  if (!node) {
+    throw new Error(`Expected a line break node at index ${index}, found ${breaks.length}`);
   }
-  return matches[0];
+  return node;
 }
 
 function copy(start: [Text, number], end: [Text, number]) {
@@ -146,6 +161,34 @@ describe("createAssistantSelectionClipboardContent inside code", () => {
 
     expect(content?.plainText).toBe("const answer = 1;\n  if (answer) {\n    doThing();");
     expect(content?.plainText).not.toContain("Copy");
+  });
+
+  it("drops a trailing line break swept in by a double click", () => {
+    const message = renderFixture({ language: "typescript" });
+
+    // Chrome extends a double click through the whitespace after the word, which
+    // here is the standalone newline node ending the line.
+    const content = copy([textNode(message, " = 1;"), 1], [lineBreakNode(message, 0), 1]);
+
+    expect(content?.plainText).toBe("= 1;");
+  });
+
+  it("drops a trailing line break and the indentation that followed it", () => {
+    const message = renderFixture({ language: "typescript" });
+
+    const content = copy([textNode(message, "const"), 0], [textNode(message, "  if"), 2]);
+
+    expect(content?.plainText).toBe("const answer = 1;");
+    // One line once the break is gone, so it lands as inline code, not a block.
+    expect(content?.html).toBe('<meta charset="utf-8"><code>const answer = 1;</code>');
+  });
+
+  it("keeps line breaks that are not at the end of the selection", () => {
+    const message = renderFixture({ language: "typescript" });
+
+    const content = copy([textNode(message, "const"), 0], [textNode(message, "  if"), 4]);
+
+    expect(content?.plainText).toBe("const answer = 1;\n  if");
   });
 
   it("returns null when the selection contains only ignored content", () => {

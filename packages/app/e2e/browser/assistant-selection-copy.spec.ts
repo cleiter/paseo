@@ -36,6 +36,7 @@ const ASSISTANT_MARKDOWN = [
   "",
   "```typescript",
   'const answer = "yes";',
+  "  return answer;",
   "```",
   "",
   "````text",
@@ -132,6 +133,44 @@ async function selectAssistantTextRange(
     },
     { startText, endText },
   );
+}
+
+/**
+ * Select from `startText` through the line break that ends its rendered code line.
+ *
+ * Highlighted code splits a line across one text node per syntax token and puts the
+ * newline in a node of its own, so this is what a drag or double click that runs off
+ * the end of a line produces.
+ */
+async function selectAssistantThroughLineBreak(page: Page, startText: string): Promise<void> {
+  const assistantMessage = page.getByTestId("assistant-message").filter({
+    hasText: "Direct matches:",
+  });
+  await assistantMessage.evaluate((element, text) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let startNode: Node | null = null;
+    let startOffset = -1;
+    let textNode = walker.nextNode();
+    while (textNode) {
+      if (!startNode) {
+        const offset = textNode.textContent?.indexOf(text) ?? -1;
+        if (offset >= 0) {
+          startNode = textNode;
+          startOffset = offset;
+        }
+      } else if (textNode.textContent?.startsWith("\n")) {
+        const range = document.createRange();
+        range.setStart(startNode, startOffset);
+        range.setEnd(textNode, 1);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return;
+      }
+      textNode = walker.nextNode();
+    }
+    throw new Error(`Could not find a line break after: ${text}`);
+  }, startText);
 }
 
 async function copySelection(page: Page): Promise<void> {
@@ -324,6 +363,14 @@ test("copying an assistant selection preserves Markdown structure and links", as
     const fenceLinesClipboard = await readRichClipboard(page);
     expect(fenceLinesClipboard.plainText).toBe("before\n```\nafter");
     expect(fenceLinesClipboard.html).toContain('<pre><code class="language-text">');
+
+    // Selecting a whole line runs off its end into the newline node. A trailing
+    // newline auto-executes the line when it is pasted into a terminal.
+    await selectAssistantThroughLineBreak(page, "const");
+    await copySelection(page);
+
+    const wholeLineClipboard = await readRichClipboard(page);
+    expect(wholeLineClipboard.plainText).toBe('const answer = "yes";');
 
     await selectAssistantText(page, "apply");
     await copySelection(page);

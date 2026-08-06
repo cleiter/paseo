@@ -143,8 +143,11 @@ function selectedCodeText(range: Range): string {
   for (const ignored of fragment.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {
     ignored.remove();
   }
-  // Deliberately untrimmed — leading indentation is part of the code.
-  return fragment.textContent ?? "";
+  // Deliberately untrimmed — leading indentation is part of the code. A trailing
+  // line break is the exception: newlines are their own text nodes between lines
+  // (`highlighted-code-block.tsx:113`), and double-clicking the last word on a line
+  // sweeps one in. Pasting that into a terminal runs the line.
+  return (fragment.textContent ?? "").replace(/\r?\n[ \t]*$/, "");
 }
 
 function wrapSelectionWithAncestors(range: Range, message: Element): Node {
