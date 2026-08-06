@@ -39,6 +39,8 @@ const ASSISTANT_MARKDOWN = [
   "  return answer;",
   "```",
   "",
+  "After code.",
+  "",
   "```bash",
   "echo trailing",
   "",
@@ -82,6 +84,19 @@ async function selectAssistantMessage(page: Page): Promise<void> {
   });
   await expect(assistantMessage).toBeVisible();
   await assistantMessage.evaluate((element) => {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+}
+
+async function selectAssistantElement(page: Page, selector: string): Promise<void> {
+  const assistantMessage = page.getByTestId("assistant-message").filter({
+    hasText: "Direct matches:",
+  });
+  await assistantMessage.locator(selector).evaluate((element) => {
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(element);
@@ -405,6 +420,26 @@ test("copying an assistant selection preserves Markdown structure and links", as
     const codeLinesClipboard = await readRichClipboard(page);
     expect(codeLinesClipboard.plainText).toBe('const answer = "yes";\n  return');
     expect(codeLinesClipboard.html).toContain('<pre><code class="language-typescript">');
+
+    // Selecting inside code expresses an intent to copy code, even when the selection
+    // contains every character in the block.
+    await selectAssistantElement(
+      page,
+      '[data-paseo-markdown-language="typescript"] [data-paseo-markdown-tag="code"]',
+    );
+    await copySelection(page);
+
+    const completeCodeClipboard = await readRichClipboard(page);
+    expect(completeCodeClipboard.plainText).toBe('const answer = "yes";\n  return answer;');
+
+    // Crossing the block boundary expresses an intent to carry its Markdown structure.
+    await selectAssistantAcrossCodeLines(page, "const", "After code.");
+    await copySelection(page);
+
+    const crossedCodeClipboard = await readRichClipboard(page);
+    expect(crossedCodeClipboard.plainText).toBe(
+      '```typescript\nconst answer = "yes";\n  return answer;\n```\n\nAfter code.',
+    );
 
     // Selecting a whole line runs off its end into the newline node. A trailing
     // newline auto-executes the line when it is pasted into a terminal.

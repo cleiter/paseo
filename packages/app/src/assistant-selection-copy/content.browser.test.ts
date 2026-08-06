@@ -155,17 +155,24 @@ describe("assistant selection copy ranges", () => {
     },
   );
 
-  it.each([
-    { tag: "strong", expected: "**bold text**" },
-    { tag: "code", expected: "`inline code`" },
-  ])("retains $tag delimiters when its complete contents are selected", ({ tag, expected }) => {
+  it("retains strong delimiters when its complete contents are selected", () => {
     const message = mountFixture();
-    const element = fixtureElement(message, `[data-paseo-markdown-tag="${tag}"]`);
+    const element = fixtureElement(message, '[data-paseo-markdown-tag="strong"]');
     const content = createAssistantSelectionClipboardContent(
       selectText(element, 0, textNode(element).length),
     );
-    expect(content?.plainText).toBe(expected);
-    expect(content?.html).toContain(`<${tag}>`);
+    expect(content?.plainText).toBe("**bold text**");
+    expect(content?.html).toContain("<strong>");
+  });
+
+  it("copies complete inline code without delimiters when the selection stays inside", () => {
+    const message = mountFixture();
+    const element = fixtureElement(message, '[data-paseo-markdown-tag="code"]');
+    const content = createAssistantSelectionClipboardContent(
+      selectText(element, 0, textNode(element).length),
+    );
+    expect(content?.plainText).toBe("inline code");
+    expect(content?.html).not.toContain("<code>");
   });
 
   it("keeps a complete inline node but drops formatting from a partial node at the other edge", () => {
@@ -228,14 +235,14 @@ describe("assistant selection copy ranges", () => {
     expect(content?.html).not.toContain("<pre>");
   });
 
-  it("retains the fence and language when the complete code block is selected", () => {
+  it("copies code without a fence when every character is selected inside the block", () => {
     const message = mountFixture();
     const blockCode = fixtureElement(
       message,
       '[data-paseo-markdown-tag="pre"] [data-paseo-markdown-tag="code"]',
     );
     expect(copiedMarkdown(selectText(blockCode, 0, textNode(blockCode).length))).toBe(
-      "```ts\nconst answer = true;\n```",
+      "const answer = true;",
     );
   });
 });
@@ -429,7 +436,7 @@ describe("assistant selection copy inside highlighted code", () => {
     expect(content?.html).not.toContain('onload="x"');
   });
 
-  it("still fences a fully selected multi-line block", () => {
+  it("copies a fully selected multi-line region as code when the selection stays inside", () => {
     const message = mountHighlighted();
     const blockCode = fixtureElement(
       message,
@@ -437,15 +444,17 @@ describe("assistant selection copy inside highlighted code", () => {
     );
 
     expect(copiedMarkdown(selectNodeContents(blockCode))).toBe(
-      "```typescript\nconst answer = 1;\n  if (answer) {\n    doThing();\n```",
+      "const answer = 1;\n  if (answer) {\n    doThing();",
     );
   });
 
-  it("leaves a selection that reaches out of the block on the Markdown path", () => {
+  it("retains the fence when a complete code block is selected across its boundary", () => {
     const message = mountHighlighted();
 
-    const content = copyAcross(message, "  if", "After the block.");
+    const content = copyAcross(message, "const", "After the block.");
 
-    expect(content?.plainText).toContain("After the block.");
+    expect(content?.plainText).toBe(
+      "```typescript\nconst answer = 1;\n  if (answer) {\n    doThing();\n```\n\nAfter the block.",
+    );
   });
 });

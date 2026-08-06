@@ -95,12 +95,13 @@ export function createAssistantSelectionClipboardContent(
  * prose: Turndown collapses the indentation and the line breaks, and escapes
  * Markdown-significant characters inside it. Two selected lines arrive as one.
  *
- * Fully selected regions are left alone — they still produce a fence, which is what
- * `hasSelectedAllContents` was already deciding for the Markdown path.
+ * A selection contained inside code always copies as code, even when it contains every
+ * character. A selection that crosses the code boundary stays on the Markdown path so
+ * a complete block retains its fence.
  */
 function createPartialCodeContent(range: Range, message: Element): MarkdownClipboardContent | null {
   const region = closestCodeRegion(range.commonAncestorContainer, message);
-  if (!region || hasSelectedAllContents(range, region)) {
+  if (!region) {
     return null;
   }
 
