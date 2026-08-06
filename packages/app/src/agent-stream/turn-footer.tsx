@@ -180,7 +180,7 @@ const WorkingActivity = memo(function WorkingActivity({
   // window under a different name.
   const isDirectoryLoading = useHostRuntimeIsDirectoryLoading(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  // COMPAT(agentTurnIdle): added in v0.2.6, remove gate after 2027-01-31 once daemon floor >= v0.2.6.
+  // COMPAT(agentTurnIdle): added in v0.3.0, remove gate after 2027-01-31 once daemon floor >= v0.3.0.
   // The one capability check for the stall half. A daemon without it does not measure idleness,
   // and the client has no sound way to measure it alone: `agent_stream` is withheld for agents
   // whose timeline is not being viewed, so an empty activity map means "not subscribed" just as
