@@ -12,6 +12,7 @@ import {
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
   MARKDOWN_COPY_TAG_ATTRIBUTE,
   MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
+  TRAILING_CODE_LINE_BREAKS,
 } from "./markup";
 
 const ASSISTANT_MESSAGE_SELECTOR = '[data-testid="assistant-message"]';
@@ -141,11 +142,10 @@ function selectedCodeText(range: Range): string {
   for (const ignored of fragment.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {
     ignored.remove();
   }
-  // Deliberately untrimmed — leading indentation is part of the code. A trailing
-  // line break is the exception: newlines are their own text nodes between rendered
-  // lines, and a double click on the last word of a line sweeps one in. Pasting that
-  // into a terminal runs the line.
-  return (fragment.textContent ?? "").replace(/\r?\n[ \t]*$/, "");
+  // Deliberately untrimmed — leading indentation is part of the code. Trailing line
+  // breaks are the exception: newlines are their own text nodes between rendered
+  // lines, so a selection that overshoots the end of a line sweeps one in.
+  return (fragment.textContent ?? "").replace(TRAILING_CODE_LINE_BREAKS, "");
 }
 
 function flattenClipboardListMarkup(html: string): string {

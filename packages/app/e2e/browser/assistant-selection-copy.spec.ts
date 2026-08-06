@@ -39,6 +39,11 @@ const ASSISTANT_MARKDOWN = [
   "  return answer;",
   "```",
   "",
+  "```bash",
+  "echo trailing",
+  "",
+  "```",
+  "",
   "````text",
   "before",
   "```",
@@ -53,10 +58,14 @@ const ASSISTANT_MARKDOWN = [
 const EXPECTED_WHOLE_SELECTION_MARKDOWN = ASSISTANT_MARKDOWN.replace(
   "<https://autolink.example.com>",
   "[https://autolink.example.com](https://autolink.example.com)",
-).replace(
-  "3. Outer three\n\n   7. Inner seven\n   8. Inner eight\n   9. Inner nine",
-  "3. Outer three\n    7. Inner seven\n    8. Inner eight\n    9. Inner nine",
-);
+)
+  .replace(
+    "3. Outer three\n\n   7. Inner seven\n   8. Inner eight\n   9. Inner nine",
+    "3. Outer three\n    7. Inner seven\n    8. Inner eight\n    9. Inner nine",
+  )
+  // Rendering drops the blank line before a closing fence, so copying cannot bring it
+  // back. The fence is here to cover a body that ends in more than one newline.
+  .replace("```bash\necho trailing\n\n```", "```bash\necho trailing\n```");
 
 interface ClipboardContent {
   html: string;
@@ -412,6 +421,14 @@ test("copying an assistant selection preserves Markdown structure and links", as
     await typescriptFence.locator("[data-paseo-markdown-ignore]").click();
 
     expect(await readPlainClipboard(page)).toBe('const answer = "yes";\n  return answer;');
+
+    // A blank line before the closing fence leaves the body ending in two newlines,
+    // so stripping only the terminal one still hands the terminal an executable line.
+    const bashFence = assistantMessage.locator('[data-paseo-markdown-language="bash"]');
+    await bashFence.hover();
+    await bashFence.locator("[data-paseo-markdown-ignore]").click();
+
+    expect(await readPlainClipboard(page)).toBe("echo trailing");
   } finally {
     await agent.cleanup();
   }
