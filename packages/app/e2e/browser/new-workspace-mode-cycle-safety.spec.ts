@@ -188,17 +188,21 @@ test.describe("New Workspace mode cycle safety", () => {
       // Both composers are codex, so an extra registrant would duplicate this exact row. Checking
       // the count is what separates "the live agent ignored the pick" from "the live agent was
       // never registered" — the assertion below cannot tell those apart on its own.
+      //
+      // Full access, not auto-review: auto-review is gated on the installed codex version
+      // (codex-app-server-agent.ts:6567), so it is absent on hosts with an older binary. Every
+      // codex install has full-access.
       await openCommandCenter(page);
       await expectCommandCenterAgentControlRowCount({
         page,
-        query: "auto-review",
-        choice: "Mode › Auto-review",
+        query: "full access",
+        choice: "Mode › Full access",
         count: 1,
       });
       await chooseCommandCenterAgentControl({
         page,
-        query: "auto-review",
-        choice: "Mode › Auto-review",
+        query: "full access",
+        choice: "Mode › Full access",
       });
 
       const agents = await seeded.client.fetchAgents();
