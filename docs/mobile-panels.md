@@ -79,6 +79,11 @@ definition, no longer eligible to begin.
   so its injected `collapsable={false}` reaches Android/Fabric.
 - Mobile sidebars render through `MobilePanelOverlay`; do not duplicate overlay lifecycle or motion
   styles in sidebar components.
+- The project-mode sidebar list is a single draggable list that is also the scroll container, so
+  three gestures compete on the same surface: the panel close swipe, the list's scroll, and a row
+  lift. `left-sidebar.tsx` hands it `closeGestureRef` and the `agent-list` presented flag, and both
+  have to keep reaching it — without them a lift and a close swipe fight, or the list keeps handling
+  gestures for a panel that is no longer on screen. See [docs/sidebar-drag.md](sidebar-drag.md).
 - The desktop left sidebar is retained too. App chrome owns separate mounted and visible decisions:
   closing it or yielding its width marks it inactive and applies `display: none` without conditionally
   removing the sidebar tree.

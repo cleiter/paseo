@@ -1,293 +1,244 @@
 # Sidebar drag and drop
 
-How dragging works in the sidebar, and the six ways it has actually broken. Every rule
-below is load-bearing: each one was a bug that shipped, was reported, and was fixed. None
-of them are obvious from the code, which is why they are written down.
+How dragging works in the sidebar in project mode, and the constraints the design is
+built around. Every rule below was a bug that shipped or a source that was read to settle
+an argument; none of them are obvious from the code, which is why they are written down.
 
-Read this before touching `sidebar-group-drag-*`, `draggable-list.web.tsx`, or the
-sorting/collision configuration.
+Read this before touching `sidebar-flat-*`, `draggable-list.*`, or the vendored
+`react-native-draggable-flatlist` patch.
 
 ## The shape
 
-The machinery is level-agnostic: it speaks **item**, **group** and **header**, and both
-levels of the sidebar use the same modules (`sidebar-group-drag-*`). A project is an item
-in a project group; a workspace is an item in a workspace group. Fix a drag bug once.
+Project mode is **one `DraggableList`**, and that list is the scroll container. Pinned
+rows, project-group headers, project rows, workspace-group headers, workspace rows, the
+"show more" toggles, the ghost "New workspace" row and the empty state are all rows of it.
 
-- **One `SidebarGroupDragContext` per level.** dnd-kit cannot move an item between two
-  `DndContext`s, and `DraggableList` mounts one per list by default — which is what made
-  drag-between-groups impossible, at both levels, until it was hoisted.
-  - Project level: one context around the project groups and the ungrouped remainder.
-  - Workspace level: one context per project, around its workspace groups.
-  - They NEST (a project block contains its workspaces' context). That is fine — dnd-kit's
-    inner provider shadows the outer for its descendants, so each drag binds to its own
-    level and the two never see each other's droppables.
-- **Each group's list is its own `SortableContext`**, plus one for the group sections.
-- **The decisions live in `sidebar-group-drag-policy.ts`** — pure, and tested. The context
-  translates dnd-kit events into policy inputs and does what it is told.
-  **If you are changing how a drag behaves, change it there and add the case to the test.**
-  Every drag bug in this feature was a policy bug, and none were visible from inside the
-  event handlers.
-- Native has no shared context at all: `react-native-draggable-flatlist` cannot drag
-  between lists, so moving a row between groups goes through the row menu.
+That is the whole design. Every move that once needed a second mechanism — into another
+group, into an empty group, a whole group to a new position — is a within-list reorder,
+which both platforms already do. The platform split is confined to the `DraggableList`
+primitive: `draggable-list.web.tsx` runs dnd-kit, `draggable-list.native.tsx` runs
+`react-native-draggable-flatlist`. Above that line there is one implementation.
 
-## The rules
-
-### 1. A row dragged between groups needs a `DragOverlay`
-
-`verticalListSortingStrategy` returns **no transform** for the active item when
-`overIndex` is `-1`:
-
-```js
-if (index === activeIndex) {
-  const overIndexRect = rects[overIndex];
-  if (!overIndexRect) return null;
+```
+groupSidebar() ─┐
+splitPinned() ──┼─► buildSidebarFlatRows() ──► SidebarFlatRow[] ──► one DraggableList
+collapse store ─┤             │
+show-more set ──┘             │  lift
+                              ▼
+                     buildDragRows(rows, origin)      ← all drag-time reshaping
+                              │
+                     frozen rows for the drag
+                              │  validSlots(rows, from) ──► native: worklet spacer snap
+                              │                         └─► web: droppable-disabled rows
+                              ▼  drop (from, to)
+                     interpretSidebarDrop ──► SidebarDropIntent ──► applyDropIntent
+                                                                          │
+                                                          sidebar-layout-edits ──► document
 ```
 
-Each group's list is its own `SortableContext`, so the moment a row hovers anything
-outside its own group, `overIndex` is `-1` and the row **snaps back to where it started**
-while the cursor is somewhere else. The overlay follows the cursor unconditionally, which
-is the only reason a cross-group drag is legible. The row left behind drops to 0.35
-opacity — with an overlay it is a placeholder marking the gap, not a second copy of itself.
+Order is derived state. A drop only writes the document, so a snap-back costs nothing.
 
-Group _sections_ do not need an overlay: they sort against each other in one shared
-`SortableContext`, so their `overIndex` is always valid.
+| Module                                  | Owns                                                    |
+| --------------------------------------- | ------------------------------------------------------- |
+| `sidebar/sidebar-flat-rows.ts`          | The projection, and `buildDragRows`                     |
+| `sidebar/use-sidebar-flat-rows.ts`      | Collapse and show-more state around the projection      |
+| `sidebar/sidebar-flat-drop-policy.ts`   | `interpretSidebarDrop`, `validSlots`, `snapToValidSlot` |
+| `sidebar/sidebar-flat-drop-apply.ts`    | Intent → document edit, and the legacy fallback         |
+| `components/sidebar-workspace-list.tsx` | The list, the row dispatcher, all dialog state          |
 
-### 2. The overlay must be portalled to `document.body`
+Status mode is a different list and none of this applies to it. It still nests
+`DraggableList`s inside a `NestableScrollContainer` and still uses
+`use-limited-sidebar-group.ts`.
 
-`DragOverlay` is `position: fixed`, and a fixed element is positioned against its nearest
-**transformed** ancestor, not the viewport. The sidebar is one — `left-sidebar.tsx`
-animates its width with Reanimated, which on web compiles to a CSS `transform`. Left
-inside it, the dragged row hangs about a sidebar's-worth of offset below the cursor.
+## Slot semantics
 
-`createPortal` moves the DOM parent, not the React tree, so theme, i18n and session
-context still resolve.
+`to` is an **insertion index into the rows with the dragged row removed**. dnd-kit's
+`arrayMove(items, from, to)` and the native list's `splice` pair agree on this, which is
+why one policy can read both.
 
-### 3. Only a POINTER MOVE may change a preview — a re-layout may not
+What that means for a user:
 
-A cross-group hover moves the item into the target group's data (without saving) so that
-group's `SortableContext` really contains it and the sorting strategy opens a gap. A
-strategy can only shift rows it knows about.
+- An **upward** drag lands _before_ the row you are over. A **downward** drag lands
+  _after_ it. There is no aim-at-the-lower-half rule — you aim at whatever currently
+  occupies the destination slot.
+- Aiming at a group **header** puts the row inside that group. This is the only way to
+  address a group with no visible rows, so it is how an empty group and a collapsed group
+  are filled, and how a row reaches the end of a group that is followed by another
+  section.
+- A drop into a **collapsed** group joins at the end, not the top. A drop positions the
+  dragged row against rows you can see, and a collapsed group shows none.
 
-This oscillated once: hover a group header, the item moves in, the group it left shrinks,
-the header slides up out from under the cursor onto the old group, which previews it back,
-which pushes the header down again — the header runs away from a hand that is holding
-still.
+`interpretSidebarDrop` reads the row above `to` to decide what the drop meant, and returns
+one of `none`, `reorder-pinned`, `move-workspace`, `move-project`,
+`reorder-workspace-groups`, `reorder-project-groups`. Only `to === from` produces `none`;
+every other in-slot drop is a real edit, which is what makes the unreachable-slot rule
+below hold.
 
-**The first diagnosis was wrong.** It looked like "headers must not preview", and that is
-how it was fixed; the cost was that hovering a group did nothing at all, which is the dead
-feeling the preview exists to remove. The real cause is that dnd-kit re-fires `dragOver`
-whenever the measured layout changes, **not only when the pointer moves** — and
-`MeasuringStrategy.Always` guarantees it will. A preview changes the layout, so a preview
-can trigger the `dragOver` that undoes it.
+## Forbidden slots are unreachable, not rejected
 
-So the context ignores any `dragOver` whose pointer `delta` has not changed since the last
-preview. A re-layout cannot move the target; only you can. With that in place headers
-preview safely, and hovering a group — including an empty one, and including the
-"Ungrouped" remainder — opens a gap at the end.
+`validSlots(rows, from)` is the single source of where a drag may land, asked once when
+the drag begins and answered against the rows the drag will actually run on. A workspace
+may move within its own project's workspace sections; a pinned row within the pinned span;
+a container header only where a block boundary is.
 
-**Which is why there is no drop-zone highlight.** Group headers used to paint themselves
-accent-bordered while a row was over them (`isOver` → `containerDropTarget`). That was
-built when headers did not preview, and it is the wrong shape now that they do: the
-preview already shows the row sitting in the group, at the position it will occupy, which
-is a stricter answer than "somewhere in here". Two answers to one question is worse than
-one — the highlight says a group, the gap says a slot, and they draw the eye to different
-places. `SidebarGroupDropTarget` still registers the droppable (a header is the only way
-to fill an empty group); it just renders its children and nothing else. Do not add the
-highlight back: if a hover feels dead, the preview is not firing, and that is the bug.
+Both platforms make every other slot **unreachable** rather than rejecting a drop on it:
 
-### 4. Collision detection is `pointerWithin`, with no fallback for rows
+- **Native**: the patched worklet snaps the spacer to the nearest valid slot, so the gap
+  only ever opens where the drop will land.
+- **Web**: rows outside the set get `disabled: {droppable: true}`.
 
-The sidebar is a vertical stack that **reshapes under the cursor**: a preview shrinks one
-group and grows another, moving everything below them. `closestCenter` answers with
-whichever centre is nearest, which after a shift is often a row back in the group the drag
-came from — so the preview yanks the row home under a cursor that has not moved. Opening a
-gap makes it worse, because it _creates_ dead space exactly where you are aiming.
+This is not a stylistic choice. On native, a drop the app ignores strands the rows it
+displaced: `CellRendererComponent` holds the last translate and the only thing that clears
+it is a fresh `onCellLayout`. A rejected drop leaves the list visibly wrong.
 
-Pointer over nothing must mean **nothing changes**, not "guess". Group sections keep the
-`closestCenter` fallback: they are large targets, cannot flicker the same way, and stay
-grabbable past the ends of the list.
+dnd-kit's `disabled` has to be given in its **granular** form. `disabled: true` turns off
+the drop target as well as the drag source, and the rows you cannot pick up — section
+headers, the "show more" toggle — are exactly the ones a drop needs to land next to.
 
-### 5. Drag-revealed droppables need `MeasuringStrategy.Always`
+## `buildDragRows` — all drag-time reshaping, before the lift
 
-Droppables are measured once at drag start by default. The empty "Ungrouped" remainder
-only appears **while** a row is in flight, and a droppable that mounts after the drag began
-is never measured — so it would highlight on hover and then quietly refuse every drop.
+Lifting a container folds its contents away, so what you drag looks like what you drop.
+`buildDragRows(rows, origin)` does that for all three container kinds — a project-group
+header folds its projects, a project header folds its workspace sections, a workspace-group
+header folds its members — and materializes the "Ungrouped" remainder header where the
+drag can target it.
 
-### 6. The order arrives as DATA, so turn dnd-kit's animations off
+Two properties make it safe:
 
-Two separate failures, both from dnd-kit animating a row to a place the data has already
-put it:
+- **It runs BEFORE the drag activates**, on both platforms. Web goes through
+  `getDragSnapshot`, which the list applies at dragStart. Native arms on the long press,
+  sets the state, waits a commit (`useEffect`) and a frame (`requestAnimationFrame`), and
+  only then calls `drag()`.
+- **It only ever changes rows at or below the active row.** Descendants and remainder
+  sections sit strictly below their container, so the active row's index and measured
+  offset never move. A property test asserts this.
 
-- **Layout animation.** With an ancestor-owned drag, the new order arrives as data, so the
-  row is already in its new place by the time dnd-kit would animate it there. It measures
-  the old rect and animates from it, and the row flies in from where it used to be. Hence
-  `animateLayoutChanges: () => false` and no settle transition — but **only** for
-  externally-driven lists. A list that owns its own drag reorders itself synchronously,
-  has nothing to fight, and keeps its animation.
-- **A frame of the old order.** `setQueryData` is not synchronous with the drop: React
-  Query notifies observers through `notifyManager`, whose default scheduler is
-  `systemSetTimeoutZero` — a macrotask, landing _after_ the browser paints. dnd-kit clears
-  its transforms synchronously. That is one painted frame of the old order. So an edit
-  publishes its result synchronously to `sidebar-layout-pending.ts` first, and React
-  batches that with dnd-kit's own reset.
+The rows are then **frozen** for the drag's duration and the policy reads `from`/`to`
+against that same array. Freezing is not optional: the native list nulls `activeKey` in
+the same render pass whenever the key sequence of `data` changes, so a replica pushing
+rows mid-drag would cancel the drag outright. The drop still applies against the **live**
+document — the edits are `beforeKey` + `after` plus adoption, which tolerate drift.
 
-### 7. Hoisting the context moves the SENSORS too
+Drag state is cleared on `onDragEnd`, `onDragTerminate` and unmount. **Not** on the native
+list's `onRelease`: that fires before the settle spring, so cleaning up there tears the
+drag down while it is still animating into place.
 
-`SidebarGroupDragContext` owns the `DndContext`, so it also owns the sensors —
-`DraggableList`'s are never constructed for a list that runs on an external context. Which
-means activation is now configured in **two** places for rows that must feel identical, and
-a change to one silently does not reach the other.
+## The vendored patch
 
-That has already happened once. `a7cbf4f61` split activation by input device — mouse on
-movement, touch on a hold, so a mouse drag no longer inherited the touch delay — and
-changed `DraggableList` only. The hoisted context kept a single `PointerSensor` with
-`{ delay: 250 }`, so a click-and-drag in the sidebar activated **nothing at all**: no
-`onDragEnd`, no write, no reorder. The comment above those sensors said "mirrors
-DraggableList's own handle activation," which was true when written and quietly stopped
-being true.
+`patches/react-native-draggable-flatlist+4.0.3.patch` carries three changes that this
+design depends on. Flag them in review; they are vendored code.
 
-Both now read `DEFAULT_DRAG_ACTIVATION_CONFIG` from `drag-reorder/pointer-activation.ts`
-and build their sensors from `getDragActivationConstraints`. Do not inline the numbers
-again. `e2e/sidebar-reorder.spec.ts` is the guard, and it is upstream's — it drags with a
-7px mouse move and no hold, which is precisely the input a hold delay eats.
+1. **Valid-slot spacer snap** (`useCellTranslate.tsx`). A `validSlots` shared value is set
+   at drag begin and the worklet snaps `result` to the nearest member before assigning
+   `spacerIndexAnim`. The spacer IS the drop — the gap you aim at is the index `onDragEnd`
+   reports — so snapping here is what makes a forbidden slot unreachable.
+2. **No `reset()` when no drag is running** (`DraggableFlatList.tsx`). Upstream schedules
+   a reset on any data key-sequence change. Rows are allowed to change shape before a drag
+   activates, and a reset scheduled by that change lands after activation and cancels the
+   drag it was preparing for.
+3. **A separator in the key-sequence compare** (`DraggableFlatList.tsx`). Joined with
+   `""`, `["ab","c"]` and `["a","bc"]` are the same string, so a change that only moves a
+   boundary reads as no change and the list keeps stale indices. The separator is NUL
+   rather than a space, because a row key may contain a space.
 
-## Invariants a preview must hold
+## Old daemons
 
-A preview is shown and not saved, so **every** exit from the drag has to account for it, or
-a row is left sitting in a group it was never moved to (and vanishes on reload):
+A host with no layout document cannot store groups. `applyDropIntent` is gated on
+`isLayoutAvailable`; without it, plain reorder intents fall through `legacyDropFallback`
+to the per-device `sidebar-order-store`, and group/move intents do nothing. The sidebar
+hides grouping entirely on such a host rather than offering an action that silently fails
+to persist.
 
-| Exit                                   | What happens                                                                                                                         |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Dropped on a row or header             | Commit                                                                                                                               |
-| Dropped on **nothing** after a preview | **Commit where it sits** — that is what is on screen, and a pointer resting in the gap the drag opened is the ordinary way to finish |
-| Dropped on nothing with no preview     | Nothing                                                                                                                              |
-| Dropped on **itself** after a preview  | **Commit** — the row is not where it started any more                                                                                |
-| Dropped on itself with no preview      | Nothing                                                                                                                              |
-| Drag cancelled                         | Discard                                                                                                                              |
+`applyDropIntent` also returns null — no write at all — when the intent's target group has
+gone. `adoptVisible*Keys` lifts the moving key out of its source first, so a write to a
+deleted group would match nothing and the key would be stored nowhere.
 
-The optimistic layout only stands while it is genuinely **ahead** of what the hosts
-confirmed. The moment the confirmed document catches up — or a newer one arrives from
-another device — it wins. That is what stops a failed write from leaving the sidebar
-showing an order nobody stored.
+## Rows are pure renderers
 
-### A drop that lands and then un-lands is not a drag bug
+A `FlatList` can evict a far-offscreen cell whatever `removeClippedSubviews` says. Rows
+that owned their own state lost it when that happened — a rename dialog, an in-flight
+archive. So **all** dialog and mutation state lives in `ProjectModeList`: one `activeModal`
+plus the pending-removal set. Rows take props and render. Keep it that way.
 
-The symptom is pure drag: you drop a row, it sits in its new place for a frame, and then the
-whole sidebar snaps back to the old order. The cause is not.
+## Things that stay true from the old design
 
-`revision: 0` is **overloaded**. It is what a document with nothing in it looks like, and it
-is also what `EMPTY_SIDEBAR_LAYOUT` looks like — and the sidebar reads it as _"no device has
-ever written a layout,"_ which means "this user does not use grouping": it drops every group
-and falls back to the per-device AsyncStorage order.
+The hoisted dnd-kit context is gone, but two of its lessons are not about it.
 
-So anything that makes the layout momentarily resolve to the empty document reverts a
-finished drag, and hides every group while it lasts. That happened: `useSidebarLayout` built
-its host entries from the live queries of hosts that were **online**, and a host drops to
-`connecting` on any reconnect. For that instant there were no entries, `pickWinningLayout`
-of no entries is the empty document, and the sidebar threw the layout away and redrew itself
-from the stale local order.
+### Activation constants are defined once
 
-**Absence of a connected host is not absence of a document.** The entries are read from the
-React Query cache for every known host, so what we last knew survives a host blinking out.
-The queries still own fetching and live updates for the hosts that are up; the cache owns
-what is rendered.
+`DEFAULT_DRAG_ACTIVATION_CONFIG` and `getDragActivationConstraints` live in
+`drag-reorder/pointer-activation.ts` and are exported rather than inlined. The sidebar once
+ran a second `DndContext` with its own copy of these numbers, and they drifted: it kept a
+mouse hold delay after `DraggableList` dropped one, so a click-and-drag in the sidebar
+activated nothing at all — no `onDragEnd`, no write, no reorder. `e2e/sidebar-reorder.spec.ts`
+is the guard, and it is upstream's: it drags with a 7px mouse move and no hold, which is
+precisely the input a hold delay eats.
 
-The same ambiguity is still there on a cold start — before the first `sidebar.layout.get`
-resolves, the layout genuinely is revision 0 and the sidebar renders ungrouped for a moment.
-If that flash ever needs fixing, fix it by distinguishing "not loaded yet" from "empty",
-not by special-casing groups.
+### A drop that lands and then un-lands is usually not a drag bug
 
-### A row the document has never seen cannot be positioned
+The symptom is pure drag — the row sits in its new place for a frame and the whole sidebar
+snaps back to the old order — and the cause usually is not. Check these before touching
+the drag code.
 
-Same symptom again — the row snaps back — and a third distinct cause, so check this one
-before reaching for the two above.
+**`revision: 0` is overloaded.** It is what a document with nothing in it looks like and
+also what `EMPTY_SIDEBAR_LAYOUT` looks like, and the sidebar reads it as "no device has
+ever written a layout", drops every group, and falls back to the per-device order. So
+anything that makes the layout momentarily resolve to the empty document reverts a
+finished drag and hides every group while it lasts. That happened: host entries were built
+from the queries of hosts that were **online**, and a host drops to `connecting` on any
+reconnect. Entries are now read from the React Query cache for every known host — absence
+of a connected host is not absence of a document. The same ambiguity remains on a cold
+start; if that flash ever needs fixing, fix it by distinguishing "not loaded yet" from
+"empty", not by special-casing groups.
 
-The document holds only the rows some device has **written** into it. A project added since
-the last layout edit is not in it, and neither is a workspace created an hour ago. Both
-still render: `applyStoredOrdering` leaves keys it does not recognise exactly where it found
-them, so the sidebar looks complete while the document is not.
-
-A drop names the row it landed on, and turning that into a new order is index arithmetic
-over the **stored** list. So two rows the document does not know cannot be ordered against
-each other at all: `dropIntoList` finds neither index, falls back to "append", and the
-projection then prunes the half it cannot place. Nothing moves. This is not an edge case —
-it is every new project on a machine where anything has ever been grouped, and it is what
-made `e2e/sidebar-reorder.spec.ts` fail in a shard (65th test, document already written by
-earlier tests) while passing when run alone (empty document, seeded from the local order).
-
-So a positional edit **adopts the visible list first**: `adoptVisibleProjectKeys` /
-`adoptVisibleWorkspaceKeys` splice each missing on-screen row in beside the row it is drawn
-beside, and the move runs against that. Two properties are load-bearing:
+**A row the document has never seen cannot be positioned.** The document holds only rows
+some device has written into it. A project added since the last layout edit is not in it,
+and neither is a workspace created an hour ago — both still render, because
+`applyStoredOrdering` leaves unrecognised keys where it found them. But a positional edit
+is index arithmetic over the **stored** list, so two unknown rows cannot be ordered against
+each other at all. This is not an edge case; it is every new project on a machine where
+anything has ever been grouped. So a positional edit **adopts the visible list first**
+(`adoptVisibleProjectKeys` / `adoptVisibleWorkspaceKeys`), and two properties of that are
+load-bearing:
 
 - **Splice, do not overwrite.** Keys the document holds that are not on screen belong to a
-  host that is offline right now. Replacing the list with what is visible deletes their
-  order — and the whole point of retaining unresolvable keys is that a multi-daemon layout
-  survives being viewed from a machine that sees half of it.
-- **Adopt only into the target list.** A key the document already files under another group
-  is known, just not here; adopting it would put one project in two groups. The row the
-  drag is carrying (`movingKey`) is the single exception, and it is lifted out of its old
-  group as it is adopted — see below.
+  host that is offline right now, and a multi-daemon layout has to survive being viewed
+  from a machine that sees half of it.
+- **Adopt only into the target list.** A key the document already files under another
+  group is known, just not here; adopting it would put one project in two groups. The row
+  the drag is carrying is the single exception, and it is lifted out of its old group as
+  it is adopted.
 
-The row menus pass no visible list and get the document untouched, which is correct: they
-name a group, not a position.
-
-### A row from another group could only ever land ABOVE
-
-Reported from dogfooding: drag a workspace out of one group and onto a row of another, and
-it goes above that row. The slot below it is unreachable — you have to drop, then drag the
-same row a second time. Two causes, both of which had to go.
-
-**A drop said which row, not which side.** `dropIntoList` inserted _before_ its target, so
-the position below a row was unaddressable — and past the last row there is no row below to
-aim at instead. `SidebarGroupDropEvent` now carries `after`, and a position is a row plus a
-side. Say it as a side rather than an index: an index reads a list the last preview already
-rewrote, so applying the same gesture twice swaps the two rows straight back and the
-preview flickers under a hand that is barely moving. "After that row" is the same answer
-however many times it is applied.
-
-**The preview froze at the first crossing.** A preview moves the row into the target list,
-which rewrites its own drag data to say it lives there — so every hover after that read as
-an ordinary same-group sort and `decideDragOver` ignored it. The position was fixed by
-wherever the boundary happened to be crossed. So the policy is told the group the row was
-in when the drag **began**, and only bails when the row is both in the hovered group and
-still in its origin group. A row already carried in keeps refining, and its new group's own
-header becomes a live "put me last" target.
-
-Which side the row has reached has two sources, and picking the wrong one for the case
-breaks the other one:
-
-- **Still in its origin group** — dnd-kit owns the sort and is painting it, so its
-  `sortable` indices are the answer: a row travelling toward a higher index in the same
-  `SortableContext` is passing below its target. Measuring here reads rectangles the
-  sorting strategy is at that moment animating, and gets the side wrong.
-- **A preview has carried it** — those indices now describe a list this drag itself wrote,
-  so deriving a position from them and writing it back is circular. Only the rectangles are
-  independent of what we already decided: compare the translated active centre against the
-  hovered row's centre.
-
-Both live in `decideAfter` in `sidebar-group-drag-context.web.tsx`. Neither is visible from
-a unit test, which is why the cross-group case is also an e2e (see Testing).
-
-**`after` is required, everywhere it is passed.** There are four drop handlers — drop and
-preview, for projects and for workspaces — and the project pair was written without it
-while the workspace pair beside them had it. An absent side reads as "above", so nothing
-failed: dragging a project DOWN past its neighbour was a silent no-op and dragging it up
-worked, for as long as it took someone to try it. That is why `useGroupActions` takes
-`after: boolean` and not `after?: boolean`. Anything positional you add here, make it
-required for the same reason.
+**`after` is required, everywhere it is passed.** A position is a row plus a side. An
+absent side reads as "above", so forgetting it does not fail — it silently makes one drag
+direction a no-op, which is exactly how it shipped once for projects while the workspace
+handlers beside them were correct. `useGroupActions` takes `after: boolean`, not
+`after?: boolean`. Anything positional you add here, make it required for the same reason.
 
 ## Testing
 
-- `sidebar-group-drag-policy.test.ts` — one case per bug that shipped, each named for the
-  **symptom** rather than the function. Add to it before fixing a drag bug.
-- `sidebar-layout-edits.test.ts` — the document edits, including the direction cases. A
-  drop names a row **and a side**; a test that leaves the side unstated is asserting on
-  "above", which is how the downward drag shipped as a silent no-op the first time.
-- `e2e/browser/sidebar-group-drag.spec.ts` — the drags themselves, in a real browser,
-  asserting on the rendered order. The unit tests cannot reach these: which side the row
-  has reached is read off dnd-kit's own measurements, and a fix that made every policy test
-  pass while still being wrong in the app is the reason the file exists. Cover **both
-  levels** — a workspace row inside a project and a project row inside a project group are
-  different code paths that look identical on screen, and the direction bug survived in the
-  project one while the workspace one was green. Rows are not nested inside their group in
-  the DOM, so assert membership positionally, against the group headers.
+- `sidebar-flat-rows.test.ts` — the projection and `buildDragRows`, including the
+  property test that the active row's index never moves.
+- `sidebar-flat-drop-policy.test.ts` — `interpretSidebarDrop` and the per-kind
+  `validSlots` tables. Cases are named for the **symptom**, not the function. Add to it
+  before fixing a drag bug.
+- `sidebar-flat-drop-apply.test.ts` — intent → edit, the missing-target guard, and the
+  legacy fallback gate.
+- `sidebar-layout-edits.test.ts` — the document edits, including both directions. A test
+  that leaves the side unstated is asserting on "above".
+- `e2e/browser/sidebar-group-drag.spec.ts` — the drags themselves in a real browser,
+  asserting on the rendered order. Cover **both** container levels: a workspace inside a
+  project and a project inside a project group are different code paths that look
+  identical on screen, and a direction bug once survived in one while the other was green.
+  Rows are not nested inside their group in the DOM, so assert membership positionally
+  against the group headers.
+
+Two things the browser suite cannot reach, so they are device QA on every change here:
+lift/scroll/close-swipe gesture arbitration on a phone, and whether collapse-on-lift is
+stable enough to keep on native (`COLLAPSE_ON_LIFT_NATIVE` in `sidebar-workspace-list.tsx`
+turns it off; drop semantics are identical either way, because the policy resolves at
+block granularity regardless).
+
+One known rough edge, unexplained: on web, clicking a group header immediately after
+dropping a row on it does not toggle the header. Moving the pointer away and waiting for
+the drop to settle makes the next click ordinary. The e2e reloads between the two.
