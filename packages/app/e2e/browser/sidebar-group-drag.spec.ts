@@ -342,11 +342,14 @@ test.describe("Sidebar workspace group drag", () => {
   });
 
   // Reported from dogfooding: a row dragged into ANOTHER group could only ever land above
-  // the row it arrived at. Getting it below meant dropping it there and dragging a second
-  // time. Two separate causes, both invisible from a unit test: the first crossing always
-  // inserted "before", and after that crossing the row's own data said it lived in the
-  // target group, so every later hover read as an ordinary same-group drag and was ignored.
-  test("drags a workspace UP into another group and drops it BELOW the row it aimed at", async ({
+  // the row it arrived at, whatever it aimed at. Getting it below meant dropping it there
+  // and dragging a second time.
+  //
+  // The sidebar is one list now, so a drag names a POSITION rather than a row and a side:
+  // the row you are over is the row you displace, and it slides out of your way in the
+  // direction you came from. Landing between two rows of another group means aiming at the
+  // lower of the two.
+  test("drags a workspace UP into another group and lands between two of its rows", async ({
     page,
   }) => {
     const seeded = await seedWorkspace({ repoPrefix: "cross-group-drag-" });
@@ -370,8 +373,8 @@ test.describe("Sidebar workspace group drag", () => {
         .poll(() => renderedOrder(page, [first, second, third]), { timeout: 15_000 })
         .toEqual([first, second, third]);
 
-      // Up into Active, aiming at the lower half of its first row.
-      await dragWorkspaceOnto(page, third, first, "below");
+      // Up into Active, into the slot the second row holds — so it ends up between the two.
+      await dragWorkspaceOnto(page, third, second);
       await expect
         .poll(() => renderedOrder(page, [first, second, third]), { timeout: 15_000 })
         .toEqual([first, third, second]);
@@ -387,10 +390,10 @@ test.describe("Sidebar workspace group drag", () => {
     }
   });
 
-  // The same gesture aimed at a group holding ONE row. The slot below a lone row is not the
-  // slot between two: there is no row beneath it to displace, so nothing on screen moves
-  // even when the position is right, and the group's own header is the next thing under the
-  // pointer.
+  // The same gesture aimed at a group holding ONE row. The slot below a lone row has no row
+  // in it to aim at — the next thing down the list is the following group's HEADER, so that
+  // header is what the drag displaces, and the row lands at the end of the group above it.
+  // This is where "aim at whatever occupies the slot" stops being about rows.
   test("drags a workspace UP into a group holding a single row and lands below it", async ({
     page,
   }) => {
@@ -423,7 +426,7 @@ test.describe("Sidebar workspace group drag", () => {
       // Both rows under Active, in that order — and Review left empty behind them. Order
       // alone cannot tell this apart from the starting state, which is why the headers are
       // in the sequence.
-      await dragWorkspaceOnto(page, second, first, "below");
+      await dragRowOnto(page, rowB, reviewHeader);
       await expect
         .poll(() => renderedSequence(page, everything), { timeout: 15_000 })
         .toEqual([activeHeader, rowA, rowB, reviewHeader]);
@@ -621,6 +624,323 @@ test.describe("Sidebar pinned order", () => {
       await expect
         .poll(() => renderedOrder(page, [first, second]), { timeout: 15_000 })
         .toEqual([first, second]);
+    } finally {
+      await seeded?.cleanup();
+    }
+  });
+});
+
+// The sidebar is ONE list: every row above is a sibling of every row below, and a drag is
+// always a reorder of that one list. These are the cases that only exist because of that —
+// slots the old per-section lists could not express at all, and the two ways the flat list
+// can get them wrong (an unreachable slot, or a drop the policy reads against the wrong
+// section).
+test.describe("Sidebar flat-list drag", () => {
+  test.describe.configure({ timeout: 180_000 });
+
+  // Dropping onto an EMPTY group is the only way to put the first row in one by dragging,
+  // and it is asymmetric on web: coming from below, the slot after the header is reachable
+  // because the header itself is the row being passed; coming from ABOVE, the pointer has
+  // to reach a slot whose upper neighbour is the header, with nothing under it. This is the
+  // direction that breaks first.
+  test("drops a workspace into an empty group from ABOVE", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "empty-group-above-" });
+
+    try {
+      const first = seeded.workspaceId;
+
+      await gotoAppShell(page);
+      await expect(workspaceRow(page, first)).toBeVisible({ timeout: 30_000 });
+      const [projectRow] = await projectRowTestIds(page);
+      if (!projectRow) {
+        throw new Error("Expected a project row");
+      }
+
+      // "Active" holds the row and renders first; "Later" is empty and renders after it, so
+      // the row starts ABOVE the header it has to reach.
+      await createWorkspaceGroup(page, first, "Active");
+      await createEmptyWorkspaceGroup(page, projectRow, "Later");
+
+      const headers = await groupHeaderTestIds(page);
+      const emptyHeader = headers.at(-1);
+      if (!emptyHeader) {
+        throw new Error("Expected the empty group's header");
+      }
+
+      await dragRowOnto(page, `sidebar-workspace-row-${workspaceKey(first)}`, emptyHeader);
+
+      // It landed in the group below its header, which is what "inside" means in a flat
+      // list — and it stayed there, so the document says so too.
+      await expect
+        .poll(
+          () =>
+            renderedSequence(page, [emptyHeader, `sidebar-workspace-row-${workspaceKey(first)}`]),
+          {
+            timeout: 15_000,
+          },
+        )
+        .toEqual([emptyHeader, `sidebar-workspace-row-${workspaceKey(first)}`]);
+
+      await page.reload();
+      await expect(workspaceRow(page, first)).toBeVisible({ timeout: 30_000 });
+      await expect
+        .poll(
+          () =>
+            renderedSequence(page, [emptyHeader, `sidebar-workspace-row-${workspaceKey(first)}`]),
+          {
+            timeout: 15_000,
+          },
+        )
+        .toEqual([emptyHeader, `sidebar-workspace-row-${workspaceKey(first)}`]);
+    } finally {
+      await seeded?.cleanup();
+    }
+  });
+
+  // A collapsed group has no rows on screen, so its HEADER is the only thing left to aim
+  // at, and the row that lands there goes inside rather than beside. Reading the drop off
+  // the row below the header instead of the header itself puts the workspace in whatever
+  // section comes next.
+  test("drops a workspace into a COLLAPSED group by aiming at its header", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "collapsed-drop-" });
+
+    try {
+      const first = seeded.workspaceId;
+      const second = await seedSecondWorkspace(seeded, "Second");
+
+      await gotoAppShell(page);
+      await expect(workspaceRow(page, first)).toBeVisible({ timeout: 30_000 });
+      await expect(workspaceRow(page, second)).toBeVisible({ timeout: 30_000 });
+
+      // Alpha renders first and Beta after it, so first starts ABOVE the header it travels
+      // to and the drag is a plain downward move.
+      await createWorkspaceGroup(page, first, "Alpha");
+      await createWorkspaceGroup(page, second, "Beta");
+      const [, betaHeader] = await groupHeaderTestIds(page);
+      if (!betaHeader) {
+        throw new Error("Expected Beta's header");
+      }
+
+      await page.getByTestId(betaHeader).click();
+      await expect(workspaceRow(page, second)).toHaveCount(0, { timeout: 10_000 });
+
+      await dragRowOnto(page, `sidebar-workspace-row-${workspaceKey(first)}`, betaHeader);
+
+      // It went into the collapsed group, so it is off screen with the group's other row.
+      await expect(workspaceRow(page, first)).toHaveCount(0, { timeout: 15_000 });
+
+      // The drag releases the pointer on this header, and clicking it again from there
+      // does not toggle it — the press never registers. Leaving the header first makes
+      // the expand click an ordinary click.
+      // Reload before expanding. A collapsed group survives a reload, so the header is
+      // still the thing to click, and coming back on a fresh page reads the membership
+      // out of the document rather than out of the list that just finished a drag.
+      await page.reload();
+      await expect(page.getByTestId(betaHeader)).toBeVisible({ timeout: 30_000 });
+      await expect(workspaceRow(page, first)).toHaveCount(0);
+
+      // Expanding proves where it went rather than only that it vanished.
+      await page.getByTestId(betaHeader).click();
+      await expect(workspaceRow(page, first)).toBeVisible({ timeout: 10_000 });
+      await expect(workspaceRow(page, second)).toBeVisible({ timeout: 10_000 });
+      // It lands AFTER the group's existing row, not at the top. A drop positions the
+      // dragged row against the rows you can see, and a collapsed group shows none, so
+      // there is nothing to insert before and it joins at the end.
+      await expect
+        .poll(
+          () =>
+            renderedSequence(page, [
+              betaHeader,
+              `sidebar-workspace-row-${workspaceKey(first)}`,
+              `sidebar-workspace-row-${workspaceKey(second)}`,
+            ]),
+          { timeout: 15_000 },
+        )
+        .toEqual([
+          betaHeader,
+          `sidebar-workspace-row-${workspaceKey(second)}`,
+          `sidebar-workspace-row-${workspaceKey(first)}`,
+        ]);
+    } finally {
+      await seeded?.cleanup();
+    }
+  });
+
+  // Dragging a HEADER moves the whole group. Its rows fold away as it lifts — the preview
+  // is the drop — and reappear under it wherever it lands.
+  test("drags a workspace group header and its rows travel with it", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "wgroup-header-drag-" });
+
+    try {
+      const first = seeded.workspaceId;
+      const second = await seedSecondWorkspace(seeded, "Second");
+
+      await gotoAppShell(page);
+      await expect(workspaceRow(page, first)).toBeVisible({ timeout: 30_000 });
+      await expect(workspaceRow(page, second)).toBeVisible({ timeout: 30_000 });
+
+      await createWorkspaceGroup(page, first, "Alpha");
+      await createWorkspaceGroup(page, second, "Beta");
+
+      const [topHeader, bottomHeader] = await groupHeaderTestIds(page);
+      if (!topHeader || !bottomHeader) {
+        throw new Error("Expected two group headers");
+      }
+
+      await dragRowOnto(page, topHeader, bottomHeader, "below");
+      await expect
+        .poll(() => renderedSequence(page, [topHeader, bottomHeader]), { timeout: 15_000 })
+        .toEqual([bottomHeader, topHeader]);
+
+      await page.reload();
+      await expect(page.getByTestId(topHeader)).toBeVisible({ timeout: 30_000 });
+      await expect
+        .poll(() => renderedSequence(page, [topHeader, bottomHeader]), { timeout: 15_000 })
+        .toEqual([bottomHeader, topHeader]);
+    } finally {
+      await seeded?.cleanup();
+    }
+  });
+
+  // The same gesture one level up. A project group holds project blocks, each of which
+  // holds its own rows, so this is the deepest fold the list ever does.
+  test("drags a project group header and its projects travel with it", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "pgroup-header-a-" });
+    const secondRepo = await createTempGitRepo("pgroup-header-b-");
+
+    try {
+      const added = await seeded.client.addProject(secondRepo.path);
+      if (!added.project) {
+        throw new Error(added.error ?? "Failed to add the second project");
+      }
+
+      await gotoAppShell(page);
+      await expect(page.locator('[data-testid^="sidebar-project-row-"]')).toHaveCount(2, {
+        timeout: 30_000,
+      });
+      const [firstRow, secondRow] = await projectRowTestIds(page);
+      if (!firstRow || !secondRow) {
+        throw new Error("Expected two project rows");
+      }
+
+      const alpha = await createProjectGroup(page, firstRow, "Alpha");
+      const beta = await createProjectGroup(page, secondRow, "Beta");
+      const alphaHeader = `sidebar-project-group-${alpha}`;
+      const betaHeader = `sidebar-project-group-${beta}`;
+
+      const [top, bottom] = await renderedSequence(page, [alphaHeader, betaHeader]);
+      if (!top || !bottom) {
+        throw new Error("Expected both project group headers on screen");
+      }
+
+      await dragRowOnto(page, top, bottom, "below");
+      await expect
+        .poll(() => renderedSequence(page, [top, bottom]), { timeout: 15_000 })
+        .toEqual([bottom, top]);
+
+      await page.reload();
+      await expect(page.getByTestId(top)).toBeVisible({ timeout: 30_000 });
+      await expect
+        .poll(() => renderedSequence(page, [top, bottom]), { timeout: 15_000 })
+        .toEqual([bottom, top]);
+    } finally {
+      await seeded?.cleanup();
+      await secondRepo.cleanup();
+    }
+  });
+
+  // One list means a workspace row and a row from ANOTHER project are siblings, so nothing
+  // about the list itself stops the drag from crossing. The policy does: the slots offered
+  // are clamped to the dragged row's own project, and a drop outside them cannot happen.
+  test("a workspace cannot be dragged into another project", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "clamp-project-a-" });
+    const secondRepo = await createTempGitRepo("clamp-project-b-");
+
+    try {
+      const added = await seeded.client.addProject(secondRepo.path);
+      if (!added.project) {
+        throw new Error(added.error ?? "Failed to add the second project");
+      }
+      const other = await seeded.client.createWorkspace({
+        source: { kind: "directory", path: secondRepo.path, projectId: added.project.projectId },
+        title: "Other",
+      });
+      if (!other.workspace) {
+        throw new Error(other.error ?? "Failed to seed the second project's workspace");
+      }
+
+      const mine = seeded.workspaceId;
+      const theirs = other.workspace.id;
+
+      await gotoAppShell(page);
+      await expect(workspaceRow(page, mine)).toBeVisible({ timeout: 30_000 });
+      await expect(workspaceRow(page, theirs)).toBeVisible({ timeout: 30_000 });
+
+      const before = await renderedOrder(page, [mine, theirs]);
+      await dragWorkspaceOnto(
+        page,
+        before[0] === mine ? mine : theirs,
+        before[0] === mine ? theirs : mine,
+      );
+
+      // Nothing moved, and nothing was written: the order is the same after a reload, which
+      // it would not be if the drop had quietly landed and then been rejected on read.
+      await expect
+        .poll(() => renderedOrder(page, [mine, theirs]), { timeout: 15_000 })
+        .toEqual(before);
+      await page.reload();
+      await expect(workspaceRow(page, mine)).toBeVisible({ timeout: 30_000 });
+      await expect
+        .poll(() => renderedOrder(page, [mine, theirs]), { timeout: 15_000 })
+        .toEqual(before);
+    } finally {
+      await seeded?.cleanup();
+      await secondRepo.cleanup();
+    }
+  });
+
+  // A cancelled drag has to put everything back: the order, and the rows the lift folded
+  // away. Getting the second half wrong leaves a group collapsed that the user never
+  // collapsed, which persists nowhere and cannot be undone by expanding it.
+  test("Escape mid-drag restores the order and the rows the lift folded away", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "escape-drag-" });
+
+    try {
+      const first = seeded.workspaceId;
+      const second = await seedSecondWorkspace(seeded, "Second");
+
+      await gotoAppShell(page);
+      await expect(workspaceRow(page, first)).toBeVisible({ timeout: 30_000 });
+      await expect(workspaceRow(page, second)).toBeVisible({ timeout: 30_000 });
+
+      await createWorkspaceGroup(page, first, "Alpha");
+      await createWorkspaceGroup(page, second, "Beta");
+      const [topHeader, bottomHeader] = await groupHeaderTestIds(page);
+      if (!topHeader || !bottomHeader) {
+        throw new Error("Expected two group headers");
+      }
+      const before = await renderedSequence(page, [topHeader, bottomHeader]);
+
+      const source = await page.getByTestId(topHeader).boundingBox();
+      const target = await page.getByTestId(bottomHeader).boundingBox();
+      if (!source || !target) {
+        throw new Error("Cannot drag: a header is not on screen");
+      }
+      const x = source.x + source.width / 2;
+      await page.mouse.move(x, source.y + source.height / 2);
+      await page.mouse.down();
+      await page.waitForTimeout(400);
+      await page.mouse.move(x, target.y + target.height * 0.9, { steps: 12 });
+      await page.keyboard.press("Escape");
+      await page.mouse.up();
+
+      // The order is untouched, and both groups still show their rows — the fold was drag
+      // scoped and went away with the drag.
+      await expect
+        .poll(() => renderedSequence(page, [topHeader, bottomHeader]), { timeout: 15_000 })
+        .toEqual(before);
+      await expect(workspaceRow(page, first)).toBeVisible({ timeout: 10_000 });
+      await expect(workspaceRow(page, second)).toBeVisible({ timeout: 10_000 });
     } finally {
       await seeded?.cleanup();
     }

@@ -32,6 +32,7 @@ export function DraggableList<T>({
   refreshing,
   onRefresh,
   extraData,
+  initialNumToRender,
   simultaneousGestureRef,
   gestureHostPresented,
   waitFor,
@@ -146,6 +147,7 @@ export function DraggableList<T>({
       showsVerticalScrollIndicator={showsVerticalScrollIndicator}
       scrollEnabled={scrollEnabled}
       extraData={extraData}
+      initialNumToRender={initialNumToRender}
       simultaneousHandlers={simultaneousHandlers}
       dragGestureHostPresented={gestureHostPresented}
       // Higher activation distance reduces accidental drag capture while nested

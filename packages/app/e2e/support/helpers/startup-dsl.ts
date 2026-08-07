@@ -192,7 +192,9 @@ class StartupAssertions {
 
   async expectsSidebarHidden(): Promise<this> {
     await expect(this.page.locator('[data-testid="sidebar-settings"]:visible')).toHaveCount(0);
-    await expect(this.page.locator('[data-testid="sidebar-project-list"]:visible')).toHaveCount(0);
+    await expect(
+      this.page.locator('[data-testid="sidebar-project-workspace-list-scroll"]:visible'),
+    ).toHaveCount(0);
     return this;
   }
 

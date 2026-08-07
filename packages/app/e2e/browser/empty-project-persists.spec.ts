@@ -130,8 +130,9 @@ test.describe("Project with no workspaces persists", () => {
       const projectRow = page.getByTestId(`sidebar-project-row-${projectId}`);
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
       await expect(projectRow).toContainText(path.basename(repo.path));
-      await expect(page.getByTestId(`sidebar-workspace-list-${projectId}`)).toHaveCount(0);
-
+      // The ghost row IS the assertion that the project has no workspaces: the sidebar
+      // emits it only for a project with none. There is no per-project list left to check
+      // for emptiness — the whole sidebar is one list.
       const newWorkspaceRow = page.getByTestId(`sidebar-project-new-workspace-row-${projectId}`);
       await expect(newWorkspaceRow).toBeVisible({ timeout: 30_000 });
       await expect(newWorkspaceRow).toContainText("New workspace");

@@ -56,6 +56,8 @@ export interface DraggableListProps<T> {
   contentContainerFlexGrow?: boolean;
   /** External row state that should invalidate virtualized native cells. */
   extraData?: unknown;
+  /** Native-only: rows to render before the first measure. Web renders every row. */
+  initialNumToRender?: number;
   /** Gesture ref for simultaneous handling with parent gestures (e.g., sidebar close) */
   simultaneousGestureRef?: MutableRefObject<GestureType | undefined>;
   /** Whether the retained native gesture host is currently presented. */

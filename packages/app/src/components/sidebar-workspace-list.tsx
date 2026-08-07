@@ -3,7 +3,6 @@ import {
   View,
   Text,
   Pressable,
-  ScrollView,
   type GestureResponderEvent,
   type PressableStateCallbackType,
   type StyleProp,
@@ -47,9 +46,28 @@ import {
   Settings,
   Trash2,
 } from "lucide-react-native";
-import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
-import type { DraggableListDragHandleProps } from "./draggable-list.types";
+import type { DraggableListDragHandleProps, DraggableListDropMeta } from "./draggable-list.types";
+import {
+  GroupSectionHeader,
+  type SidebarGroupKind,
+} from "@/components/sidebar/group-section-header";
+import { SidebarRowRail } from "@/components/sidebar/sidebar-row-rail";
+import { useSidebarFlatRows } from "@/sidebar/use-sidebar-flat-rows";
+import {
+  dragOriginForRow,
+  isDraggableRow,
+  UNGROUPED_PROJECTS_COLLAPSE_KEY,
+  workspaceRemainderCollapseKey,
+  type SidebarDragOrigin,
+  type SidebarFlatRow,
+  type SidebarProjectGroupHeaderRow,
+  type SidebarProjectHeaderRow,
+  type SidebarShowMoreRow,
+  type SidebarWorkspaceGroupHeaderRow,
+} from "@/sidebar/sidebar-flat-rows";
+import { interpretSidebarDrop, validSlots } from "@/sidebar/sidebar-flat-drop-policy";
+import { legacyDropFallback } from "@/sidebar/sidebar-flat-drop-apply";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import {
@@ -105,12 +123,6 @@ import {
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
-import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
-import { WorkspaceGroupSection } from "@/components/sidebar/workspace-group-section";
-import { SidebarGroupDragContext } from "@/components/sidebar/sidebar-group-drag-context";
-import type { SidebarGroupDropEvent } from "@/components/sidebar/sidebar-group-drag-shared";
-import { ProjectGroupSection } from "@/components/sidebar/project-group-section";
-import { UngroupedProjectSection } from "@/components/sidebar/ungrouped-project-section";
 import {
   type GroupedSidebarProject,
   type SidebarGroupRef,
@@ -119,7 +131,6 @@ import {
   useSidebarGroups,
 } from "@/hooks/use-sidebar-groups";
 import { createGroupId, useGroupActions, type GroupAssignment } from "@/hooks/use-group-actions";
-import { mergeWithinSlots } from "@/utils/sidebar-reorder";
 
 import {
   SidebarWorkspaceRowFrame,
@@ -170,10 +181,6 @@ import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
-
-const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
-
-const projectViewKeyExtractor = (project: SidebarProjectEntry) => project.viewKey;
 
 const WORKSPACE_STATUS_DOT_WIDTH = 14;
 const ThemedExternalLink = withUnistyles(ExternalLink);
@@ -1851,645 +1858,6 @@ function WorkspaceRow({
   );
 }
 
-// One list, exactly as the sidebar draws it. A drop is positional, and the document can
-// only position rows it already knows — a project or workspace created since the last
-// layout write is not in it, so the drop has nothing to measure against and the row snaps
-// back. Handing the drawn list over is what lets the edit adopt those rows first.
-function visibleWorkspaceKeys(
-  project: GroupedSidebarProject,
-  groupId: string | null,
-): readonly string[] {
-  if (groupId === null) {
-    return project.ungroupedWorkspaces.map((workspace) => workspace.workspaceKey);
-  }
-  return (
-    project.workspaceGroups
-      .find((group) => group.groupId === groupId)
-      ?.workspaces.map((workspace) => workspace.workspaceKey) ?? []
-  );
-}
-
-function visibleProjectKeys(
-  grouped: { projectGroups: SidebarProjectGroup[]; ungroupedProjects: GroupedSidebarProject[] },
-  groupId: string | null,
-): readonly string[] {
-  if (groupId === null) {
-    return grouped.ungroupedProjects.map((project) => project.viewKey);
-  }
-  return (
-    grouped.projectGroups
-      .find((group) => group.groupId === groupId)
-      ?.projects.map((project) => project.viewKey) ?? []
-  );
-}
-
-function ProjectBlock({
-  project,
-  workspaceEntriesByKey,
-  collapsed,
-  displayName,
-  iconDataUri,
-  selectionEnabled,
-  showShortcutBadges,
-  shortcutIndexByWorkspaceKey,
-  parentGestureRef,
-  onToggleCollapsed,
-  onWorkspacePress,
-  onWorkspaceReorder,
-  onWorktreeCreated,
-  drag,
-  isDragging,
-  dragHandleProps,
-  useNestable,
-  dragGestureHostPresented,
-  creatingWorkspaceIds,
-  activeWorkspaceSelection,
-  hostBadgeByServerId,
-  supportsMultiplicityByServerId,
-  supportsPinningByServerId,
-  isLayoutAvailable,
-  onToggleWorkspacePin,
-  onWorkspaceGroupReorder,
-  onRenameGroup,
-  onDeleteGroup,
-  availableProjectGroups,
-  onSetProjectGroup,
-  onWorkspaceGroupDrop,
-  onWorkspaceGroupDragPreview,
-  onWorkspaceGroupDragPreviewCancel,
-  onWorkspaceGroupsReorder,
-}: {
-  project: GroupedSidebarProject;
-  availableProjectGroups: SidebarGroupRef[];
-  onSetProjectGroup: (project: GroupedSidebarProject, assignment: GroupAssignment) => void;
-  onWorkspaceGroupDrop: (
-    projectKey: string,
-    event: SidebarGroupDropEvent,
-    visibleKeys: readonly string[],
-  ) => void;
-  onWorkspaceGroupDragPreview: (
-    projectKey: string,
-    event: SidebarGroupDropEvent,
-    visibleKeys: readonly string[],
-  ) => void;
-  onWorkspaceGroupDragPreviewCancel: () => void;
-  onWorkspaceGroupsReorder: (projectKey: string, orderedGroupIds: string[]) => void;
-  workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
-  collapsed: boolean;
-  displayName: string;
-  iconDataUri: string | null;
-  selectionEnabled: boolean;
-  showShortcutBadges: boolean;
-  shortcutIndexByWorkspaceKey: Map<string, number>;
-  parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  onToggleCollapsed: (projectViewKey: string) => void;
-  onWorkspacePress?: () => void;
-  onWorkspaceReorder: (projectViewKey: string, workspaces: SidebarWorkspacePlacement[]) => void;
-  onWorkspaceGroupReorder: (
-    projectKey: string,
-    groupId: string | null,
-    workspaces: SidebarWorkspacePlacement[],
-  ) => void;
-  onRenameGroup: (group: SidebarWorkspaceGroup, project: GroupedSidebarProject) => void;
-  onDeleteGroup: (group: SidebarWorkspaceGroup, project: GroupedSidebarProject) => void;
-  onWorktreeCreated?: (workspaceId: string) => void;
-  drag: () => void;
-  isDragging: boolean;
-  dragHandleProps?: DraggableListDragHandleProps;
-  useNestable: boolean;
-  dragGestureHostPresented?: boolean;
-  creatingWorkspaceIds: ReadonlySet<string>;
-  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
-  hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
-  supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
-  supportsPinningByServerId: ReadonlyMap<string, boolean>;
-  // Whether ANY connected host can store the layout document. Grouping is one write to
-  // one replicated document, so that is the whole question — see the row gate below.
-  isLayoutAvailable: boolean;
-  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
-}) {
-  const {
-    visibleItems: visibleWorkspaces,
-    expanded: workspacesExpanded,
-    canToggle: canToggleWorkspaces,
-    toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(project.workspaces);
-  const rowModel = useMemo(
-    () =>
-      buildSidebarProjectRowModel({
-        project,
-        collapsed,
-        supportsMultiplicityByServerId,
-      }),
-    [collapsed, project, supportsMultiplicityByServerId],
-  );
-
-  // Collapsed rows hide their workspace rows, so the project row carries the most urgent
-  // status among them; expanded rows leave the signal to the child rows themselves.
-  const aggregateStatusBucket = useSidebarProjectStatusBucket({
-    workspaces: project.workspaces,
-    enabled: collapsed,
-  });
-
-  // The groups that already exist in this project, offered as move targets in every
-  // one of its workspace menus.
-  const projectGroupRefs = useMemo<SidebarGroupRef[]>(
-    () =>
-      project.workspaceGroups.map((group) => ({
-        groupId: group.groupId,
-        groupName: group.groupName,
-      })),
-    [project.workspaceGroups],
-  );
-
-  // Built once per project rather than derived per row: a row does not know its own
-  // group (the document does), and re-deriving it in every row would subscribe every
-  // row to the whole layout.
-  const groupIdByWorkspaceKey = useMemo(() => {
-    const byKey = new Map<string, string>();
-    for (const group of project.workspaceGroups) {
-      for (const workspace of group.workspaces) {
-        byKey.set(workspace.workspaceKey, group.groupId);
-      }
-    }
-    return byKey;
-  }, [project.workspaceGroups]);
-
-  const [isNewProjectGroupOpen, setIsNewProjectGroupOpen] = useState(false);
-  const [isNewWorkspaceGroupOpen, setIsNewWorkspaceGroupOpen] = useState(false);
-  const { createWorkspaceGroup } = useGroupActions();
-
-  const handleOpenNewWorkspaceGroup = useCallback(() => setIsNewWorkspaceGroupOpen(true), []);
-  const handleCloseNewWorkspaceGroup = useCallback(() => setIsNewWorkspaceGroupOpen(false), []);
-  const handleSubmitNewWorkspaceGroup = useCallback(
-    (name: string) => {
-      const trimmed = name.trim();
-      if (trimmed.length > 0) {
-        createWorkspaceGroup({ projectKey: project.viewKey, name: trimmed });
-      }
-      setIsNewWorkspaceGroupOpen(false);
-    },
-    [createWorkspaceGroup, project.viewKey],
-  );
-
-  const handleMoveProjectToGroup = useCallback(
-    (group: SidebarGroupRef) => {
-      onSetProjectGroup(project, { groupId: group.groupId, groupName: group.groupName });
-    },
-    [onSetProjectGroup, project],
-  );
-  const handleOpenNewProjectGroup = useCallback(() => setIsNewProjectGroupOpen(true), []);
-  const handleCloseNewProjectGroup = useCallback(() => setIsNewProjectGroupOpen(false), []);
-  const handleSubmitNewProjectGroup = useCallback(
-    (name: string) => {
-      const trimmed = name.trim();
-      if (trimmed.length > 0) {
-        onSetProjectGroup(project, { groupId: createGroupId(), groupName: trimmed });
-      }
-      setIsNewProjectGroupOpen(false);
-    },
-    [onSetProjectGroup, project],
-  );
-  const handleRemoveProjectFromGroup = useCallback(() => {
-    onSetProjectGroup(project, { groupId: null, groupName: null });
-  }, [onSetProjectGroup, project]);
-
-  const groupMenu = useMemo<ProjectGroupMenu | undefined>(
-    () =>
-      isLayoutAvailable
-        ? {
-            availableGroups: availableProjectGroups,
-            currentGroupId: project.projectGroup?.groupId ?? null,
-            onMoveToGroup: handleMoveProjectToGroup,
-            onMoveToNewGroup: handleOpenNewProjectGroup,
-            onRemoveFromGroup: handleRemoveProjectFromGroup,
-          }
-        : undefined,
-    [
-      isLayoutAvailable,
-      availableProjectGroups,
-      project.projectGroup,
-      handleMoveProjectToGroup,
-      handleOpenNewProjectGroup,
-      handleRemoveProjectFromGroup,
-    ],
-  );
-
-  const active = isProjectSelectedByRoute({
-    selection: activeWorkspaceSelection,
-    project,
-    enabled: selectionEnabled,
-  });
-
-  const renderWorkspaceRow = useCallback(
-    (
-      item: SidebarWorkspacePlacement,
-      input?: {
-        drag?: () => void;
-        isDragging?: boolean;
-        dragHandleProps?: DraggableListDragHandleProps;
-      },
-    ) => {
-      return (
-        <MemoWorkspaceRowItem
-          workspace={item}
-          workspaceEntry={workspaceEntriesByKey.get(item.workspaceKey) ?? null}
-          hostBadge={hostBadgeByServerId.get(item.serverId) ?? null}
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          canCopyBranchName={project.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(item.serverId) === true}
-          canGroup={isLayoutAvailable}
-          availableGroups={projectGroupRefs}
-          currentGroupId={groupIdByWorkspaceKey.get(item.workspaceKey) ?? null}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-          isCreating={creatingWorkspaceIds.has(item.workspaceId)}
-          selectionEnabled={selectionEnabled}
-          activeWorkspaceSelection={activeWorkspaceSelection}
-          onWorkspacePress={onWorkspacePress}
-          drag={input?.drag}
-          isDragging={input?.isDragging}
-          dragHandleProps={input?.dragHandleProps}
-        />
-      );
-    },
-    [
-      project.projectKind,
-      onToggleWorkspacePin,
-      supportsPinningByServerId,
-      isLayoutAvailable,
-      projectGroupRefs,
-      groupIdByWorkspaceKey,
-      activeWorkspaceSelection,
-      creatingWorkspaceIds,
-      hostBadgeByServerId,
-      onWorkspacePress,
-      selectionEnabled,
-      shortcutIndexByWorkspaceKey,
-      showShortcutBadges,
-      workspaceEntriesByKey,
-    ],
-  );
-
-  const renderWorkspace = useCallback(
-    ({
-      item,
-      drag: workspaceDrag,
-      isActive,
-      dragHandleProps: workspaceDragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
-      return renderWorkspaceRow(item, {
-        drag: workspaceDrag,
-        isDragging: isActive,
-        dragHandleProps: workspaceDragHandleProps,
-      });
-    },
-    [renderWorkspaceRow],
-  );
-
-  const handleWorkspaceDragEnd = useCallback(
-    (workspaces: SidebarWorkspacePlacement[]) => {
-      onWorkspaceReorder(project.viewKey, workspaces);
-    },
-    [onWorkspaceReorder, project.viewKey],
-  );
-
-  const toast = useToast();
-  const { t } = useTranslation();
-  const [isRemovingProject, setIsRemovingProject] = useState(false);
-
-  const handleRemoveProject = useCallback(() => {
-    if (isRemovingProject) {
-      return;
-    }
-
-    void (async () => {
-      const confirmed = await confirmDialog({
-        title: t("sidebar.project.confirmations.removeTitle"),
-        message: t("sidebar.project.confirmations.removeMessage", { projectName: displayName }),
-        confirmLabel: t("sidebar.project.confirmations.removeConfirm"),
-        cancelLabel: t("sidebar.project.confirmations.cancel"),
-        destructive: true,
-      });
-      if (!confirmed) {
-        return;
-      }
-
-      setIsRemovingProject(true);
-      const readiness = getCurrentProjectRemoveReadiness({
-        hosts: project.hosts,
-      });
-      if (readiness.kind === "needs_host_update") {
-        toast.error(t("sidebar.project.toasts.updateHostToRemove"));
-        setIsRemovingProject(false);
-        return;
-      }
-
-      void removeProjectFromHosts({
-        targets: readiness.targets,
-        getClient: (serverId) => getHostRuntimeStore().getClient(serverId),
-      })
-        .then((outcome) => {
-          if (outcome.kind === "host_disconnected") {
-            toast.error(t("sidebar.project.toasts.hostDisconnected"));
-            return null;
-          }
-          if (outcome.kind === "failed") {
-            toast.error(t("sidebar.project.toasts.removeFailed"));
-          }
-          return null;
-        })
-        .catch((error) => {
-          toast.error(
-            error instanceof Error ? error.message : t("sidebar.project.toasts.removeFailed"),
-          );
-        })
-        .finally(() => {
-          setIsRemovingProject(false);
-        });
-    })();
-  }, [isRemovingProject, displayName, t, toast, project.hosts]);
-
-  const handleToggleCollapsed = useCallback(() => {
-    onToggleCollapsed(project.viewKey);
-  }, [onToggleCollapsed, project.viewKey]);
-
-  const handleGroupDragEnd = useCallback(
-    (groupId: string | null, workspaces: SidebarWorkspacePlacement[]) => {
-      onWorkspaceGroupReorder(project.viewKey, groupId, workspaces);
-    },
-    [onWorkspaceGroupReorder, project.viewKey],
-  );
-
-  // A drop is ONE edit now. Membership and position used to live in different places --
-  // the group on the daemon, the position in a local order store -- so a drop had to hit
-  // both or the row would snap back. The document holds both, so moving the row into the
-  // target list at the target position is the whole operation.
-  const handleGroupDrop = useCallback(
-    (event: SidebarGroupDropEvent) => {
-      onWorkspaceGroupDrop(project.viewKey, event, visibleWorkspaceKeys(project, event.toGroupId));
-    },
-    [onWorkspaceGroupDrop, project],
-  );
-
-  const handleGroupsReorder = useCallback(
-    (orderedGroupIds: string[]) => {
-      onWorkspaceGroupsReorder(project.viewKey, orderedGroupIds);
-    },
-    [onWorkspaceGroupsReorder, project.viewKey],
-  );
-
-  const handleGroupDragPreview = useCallback(
-    (event: SidebarGroupDropEvent) => {
-      onWorkspaceGroupDragPreview(
-        project.viewKey,
-        event,
-        visibleWorkspaceKeys(project, event.toGroupId),
-      );
-    },
-    [onWorkspaceGroupDragPreview, project],
-  );
-
-  const workspaceGroupIds = useMemo(
-    () => project.workspaceGroups.map((group) => group.groupId),
-    [project.workspaceGroups],
-  );
-
-  // The row that follows the cursor during a drag. It is the SAME row renderer the list
-  // uses, so the thing under the cursor is the thing you grabbed.
-  const renderWorkspaceDragOverlay = useCallback(
-    (workspaceKey: string) => {
-      const workspace = project.workspaces.find((item) => item.workspaceKey === workspaceKey);
-      if (!workspace) {
-        return null;
-      }
-      return renderWorkspace({
-        item: workspace,
-        index: 0,
-        drag: noop,
-        isActive: true,
-      });
-    },
-    [project.workspaces, renderWorkspace],
-  );
-
-  let projectChildren = null;
-  if (!collapsed) {
-    if (project.workspaceGroups.length > 0) {
-      // Grouped: each group is its own drag context, and the leftovers fall into an
-      // "Ungrouped" remainder so nothing can go missing from the project.
-      projectChildren = (
-        <SidebarGroupDragContext
-          groupIds={workspaceGroupIds}
-          onDrop={handleGroupDrop}
-          onReorderGroups={handleGroupsReorder}
-          renderDragOverlay={renderWorkspaceDragOverlay}
-          onDragPreview={handleGroupDragPreview}
-          onDragPreviewCancel={onWorkspaceGroupDragPreviewCancel}
-        >
-          {project.workspaceGroups.map((group) => (
-            <WorkspaceGroupSection
-              key={group.groupId}
-              projectKey={project.viewKey}
-              groupId={group.groupId}
-              groupName={group.groupName}
-              workspaces={group.workspaces}
-              renderWorkspace={renderWorkspace}
-              keyExtractor={workspaceKeyExtractor}
-              onDragEnd={handleGroupDragEnd}
-              extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-              parentGestureRef={parentGestureRef}
-              useNestable={useNestable}
-              group={group}
-              project={project}
-              onRenameGroup={onRenameGroup}
-              onDeleteGroup={onDeleteGroup}
-            />
-          ))}
-          {/* Rendered even when EMPTY, unlike before. Once every workspace has been
-              grouped there are no ungrouped rows left to drop between, and without the
-              label standing there as a target you could never drag one back out. */}
-          <WorkspaceGroupSection
-            projectKey={project.viewKey}
-            groupId={null}
-            workspaces={project.ungroupedWorkspaces}
-            renderWorkspace={renderWorkspace}
-            keyExtractor={workspaceKeyExtractor}
-            onDragEnd={handleGroupDragEnd}
-            extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-            parentGestureRef={parentGestureRef}
-            useNestable={useNestable}
-          />
-        </SidebarGroupDragContext>
-      );
-    } else if (project.workspaces.length > 0) {
-      projectChildren = (
-        <>
-          <DraggableList
-            testID={`sidebar-workspace-list-${project.viewKey}`}
-            data={visibleWorkspaces}
-            keyExtractor={workspaceKeyExtractor}
-            renderItem={renderWorkspace}
-            onDragEnd={handleWorkspaceDragEnd}
-            extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-            scrollEnabled={false}
-            useDragHandle
-            nestable={useNestable}
-            simultaneousGestureRef={parentGestureRef}
-            gestureHostPresented={dragGestureHostPresented}
-            containerStyle={styles.workspaceListContainer}
-          />
-          {canToggleWorkspaces ? (
-            <SidebarGroupToggleRow
-              expanded={workspacesExpanded}
-              onPress={toggleWorkspacesExpanded}
-              testID={`sidebar-project-show-more-${project.viewKey}`}
-            />
-          ) : null}
-        </>
-      );
-    } else if (rowModel.trailingAction.kind === "new_workspace") {
-      projectChildren = (
-        <NewWorkspaceGhostRow
-          project={project}
-          displayName={displayName}
-          worktreeTarget={rowModel.trailingAction.target}
-          onWorkspacePress={onWorkspacePress}
-        />
-      );
-    }
-  }
-
-  return (
-    <View
-      role="group"
-      accessibilityLabel={displayName}
-      style={projectChildren ? styles.projectBlockExpanded : undefined}
-    >
-      <ProjectHeaderRow
-        groupMenu={groupMenu}
-        onNewWorkspaceGroup={isLayoutAvailable ? handleOpenNewWorkspaceGroup : undefined}
-        project={project}
-        displayName={displayName}
-        iconDataUri={iconDataUri}
-        statusBucket={aggregateStatusBucket}
-        selected={false}
-        chevron={rowModel.chevron}
-        onPress={handleToggleCollapsed}
-        worktreeTarget={
-          rowModel.trailingAction.kind === "new_workspace" ? rowModel.trailingAction.target : null
-        }
-        isProjectActive={active}
-        onWorkspacePress={onWorkspacePress}
-        onWorktreeCreated={onWorktreeCreated}
-        drag={drag}
-        isDragging={isDragging}
-        isArchiving={isRemovingProject}
-        menuController={null}
-        onRemoveProject={handleRemoveProject}
-        removeProjectStatus={isRemovingProject ? "pending" : "idle"}
-        dragHandleProps={dragHandleProps}
-      />
-
-      {projectChildren}
-      {isNewProjectGroupOpen ? (
-        <AdaptiveRenameModal
-          visible
-          title={t("sidebar.projectGroup.newGroupTitle")}
-          initialValue=""
-          placeholder={t("sidebar.projectGroup.newGroupPlaceholder")}
-          submitLabel={t("sidebar.group.create")}
-          onClose={handleCloseNewProjectGroup}
-          onSubmit={handleSubmitNewProjectGroup}
-          testID={`sidebar-project-new-group-modal-${project.viewKey}`}
-        />
-      ) : null}
-      {isNewWorkspaceGroupOpen ? (
-        <AdaptiveRenameModal
-          visible
-          title={t("sidebar.workspaceGroup.newGroupTitle")}
-          initialValue=""
-          placeholder={t("sidebar.workspaceGroup.newGroupPlaceholder")}
-          submitLabel={t("sidebar.group.create")}
-          onClose={handleCloseNewWorkspaceGroup}
-          onSubmit={handleSubmitNewWorkspaceGroup}
-          testID={`sidebar-project-new-workspace-group-modal-${project.viewKey}`}
-        />
-      ) : null}
-    </View>
-  );
-}
-
-type ProjectBlockProps = Parameters<typeof ProjectBlock>[0];
-
-// oxlint-disable-next-line complexity
-function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlockProps): boolean {
-  return (
-    previous.project === next.project &&
-    previous.workspaceEntriesByKey === next.workspaceEntriesByKey &&
-    previous.collapsed === next.collapsed &&
-    previous.displayName === next.displayName &&
-    previous.iconDataUri === next.iconDataUri &&
-    previous.selectionEnabled === next.selectionEnabled &&
-    previous.showShortcutBadges === next.showShortcutBadges &&
-    previous.shortcutIndexByWorkspaceKey === next.shortcutIndexByWorkspaceKey &&
-    previous.hostBadgeByServerId === next.hostBadgeByServerId &&
-    previous.supportsMultiplicityByServerId === next.supportsMultiplicityByServerId &&
-    previous.supportsPinningByServerId === next.supportsPinningByServerId &&
-    previous.isLayoutAvailable === next.isLayoutAvailable &&
-    previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
-    previous.parentGestureRef === next.parentGestureRef &&
-    previous.onToggleCollapsed === next.onToggleCollapsed &&
-    previous.onWorkspacePress === next.onWorkspacePress &&
-    previous.onWorkspaceReorder === next.onWorkspaceReorder &&
-    previous.onWorkspaceGroupReorder === next.onWorkspaceGroupReorder &&
-    previous.onRenameGroup === next.onRenameGroup &&
-    previous.onDeleteGroup === next.onDeleteGroup &&
-    previous.availableProjectGroups === next.availableProjectGroups &&
-    previous.onSetProjectGroup === next.onSetProjectGroup &&
-    previous.onWorkspaceGroupDrop === next.onWorkspaceGroupDrop &&
-    previous.onWorkspaceGroupDragPreview === next.onWorkspaceGroupDragPreview &&
-    previous.onWorkspaceGroupDragPreviewCancel === next.onWorkspaceGroupDragPreviewCancel &&
-    previous.onWorkspaceGroupsReorder === next.onWorkspaceGroupsReorder &&
-    previous.onWorktreeCreated === next.onWorktreeCreated &&
-    previous.drag === next.drag &&
-    previous.isDragging === next.isDragging &&
-    previous.dragHandleProps === next.dragHandleProps &&
-    previous.useNestable === next.useNestable &&
-    previous.dragGestureHostPresented === next.dragGestureHostPresented &&
-    previous.creatingWorkspaceIds === next.creatingWorkspaceIds &&
-    areProjectBlockSelectionsEqual(previous, next)
-  );
-}
-
-function areProjectBlockSelectionsEqual(
-  previous: ProjectBlockProps,
-  next: ProjectBlockProps,
-): boolean {
-  const previousActive = isProjectSelectedByRoute({
-    selection: previous.activeWorkspaceSelection,
-    project: previous.project,
-    enabled: previous.selectionEnabled,
-  });
-  const nextActive = isProjectSelectedByRoute({
-    selection: next.activeWorkspaceSelection,
-    project: next.project,
-    enabled: next.selectionEnabled,
-  });
-  if (previousActive !== nextActive) {
-    return false;
-  }
-  if (!previousActive) {
-    return true;
-  }
-  return (
-    activeWorkspaceSelectionKey(previous.activeWorkspaceSelection) ===
-    activeWorkspaceSelectionKey(next.activeWorkspaceSelection)
-  );
-}
-
-const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
-
 export function SidebarWorkspaceList({
   statusGroups,
   pinnedGroups,
@@ -2616,11 +1984,332 @@ function SidebarStatusModeWrapper({
   );
 }
 
+// The project header, as one row of the flat list. It owns only DERIVED state — the
+// aggregate status a collapsed project shows for the workspaces it is hiding. Anything
+// that has to outlive the row (an open dialog, a remove in flight) lives in the
+// container, because the list unmounts rows that scroll far enough away.
+const ProjectHeaderFlatRow = memo(function ProjectHeaderFlatRow({
+  row,
+  iconDataUri,
+  isProjectActive,
+  isRemoving,
+  canGroup,
+  availableProjectGroups,
+  supportsMultiplicityByServerId,
+  onToggleCollapsed,
+  onWorkspacePress,
+  onWorktreeCreated,
+  onNewWorkspaceGroup,
+  onSetProjectGroup,
+  onNewProjectGroup,
+  onRemoveProject,
+  drag,
+  isDragging,
+  dragHandleProps,
+}: {
+  row: SidebarProjectHeaderRow;
+  iconDataUri: string | null;
+  isProjectActive: boolean;
+  isRemoving: boolean;
+  canGroup: boolean;
+  availableProjectGroups: SidebarGroupRef[];
+  supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
+  onToggleCollapsed: (projectViewKey: string) => void;
+  onWorkspacePress?: () => void;
+  onWorktreeCreated?: (workspaceId: string) => void;
+  onNewWorkspaceGroup: (projectKey: string) => void;
+  onSetProjectGroup: (project: GroupedSidebarProject, assignment: GroupAssignment) => void;
+  onNewProjectGroup: (project: GroupedSidebarProject) => void;
+  onRemoveProject: (project: GroupedSidebarProject) => void;
+  drag: () => void;
+  isDragging: boolean;
+  dragHandleProps?: DraggableListDragHandleProps;
+}) {
+  const { project, collapsed } = row;
+  const rowModel = useMemo(
+    () => buildSidebarProjectRowModel({ project, collapsed, supportsMultiplicityByServerId }),
+    [project, collapsed, supportsMultiplicityByServerId],
+  );
+
+  // Collapsed rows hide their workspace rows, so the project row carries the most urgent
+  // status among them; expanded rows leave the signal to the child rows themselves.
+  const aggregateStatusBucket = useSidebarProjectStatusBucket({
+    workspaces: project.workspaces,
+    enabled: collapsed,
+  });
+
+  const handleToggle = useCallback(
+    () => onToggleCollapsed(project.viewKey),
+    [onToggleCollapsed, project.viewKey],
+  );
+  const handleNewWorkspaceGroup = useCallback(
+    () => onNewWorkspaceGroup(project.viewKey),
+    [onNewWorkspaceGroup, project.viewKey],
+  );
+  const handleRemove = useCallback(() => onRemoveProject(project), [onRemoveProject, project]);
+
+  const groupMenu = useMemo<ProjectGroupMenu | undefined>(
+    () =>
+      canGroup
+        ? {
+            availableGroups: availableProjectGroups,
+            currentGroupId: row.parentGroupId,
+            onMoveToGroup: (group: SidebarGroupRef) =>
+              onSetProjectGroup(project, {
+                groupId: group.groupId,
+                groupName: group.groupName,
+              }),
+            onMoveToNewGroup: () => onNewProjectGroup(project),
+            onRemoveFromGroup: () => onSetProjectGroup(project, { groupId: null, groupName: null }),
+          }
+        : undefined,
+    [
+      canGroup,
+      availableProjectGroups,
+      row.parentGroupId,
+      project,
+      onSetProjectGroup,
+      onNewProjectGroup,
+    ],
+  );
+
+  return (
+    <ProjectHeaderRow
+      groupMenu={groupMenu}
+      onNewWorkspaceGroup={canGroup ? handleNewWorkspaceGroup : undefined}
+      project={project}
+      displayName={project.projectName}
+      iconDataUri={iconDataUri}
+      statusBucket={aggregateStatusBucket}
+      selected={false}
+      chevron={rowModel.chevron}
+      onPress={handleToggle}
+      worktreeTarget={
+        rowModel.trailingAction.kind === "new_workspace" ? rowModel.trailingAction.target : null
+      }
+      isProjectActive={isProjectActive}
+      onWorkspacePress={onWorkspacePress}
+      onWorktreeCreated={onWorktreeCreated}
+      drag={drag}
+      isDragging={isDragging}
+      isArchiving={isRemoving}
+      menuController={null}
+      onRemoveProject={handleRemove}
+      removeProjectStatus={isRemoving ? "pending" : "idle"}
+      dragHandleProps={dragHandleProps}
+    />
+  );
+});
+
+// The two group headers, one component each, for the same reason every other row kind has
+// one: a header renders a handful of callbacks, and building them in the list's renderItem
+// would rebuild every one of them on every keystroke somewhere else in the sidebar.
+const ProjectGroupHeaderFlatRow = memo(function ProjectGroupHeaderFlatRow({
+  row,
+  onToggleCollapsed,
+  onRename,
+  onDelete,
+  drag,
+  isDragging,
+  dragHandleProps,
+}: {
+  row: SidebarProjectGroupHeaderRow;
+  onToggleCollapsed: (collapseKey: string) => void;
+  onRename: (group: SidebarProjectGroup) => void;
+  onDelete: (group: SidebarProjectGroup) => void;
+  drag: () => void;
+  isDragging: boolean;
+  dragHandleProps?: DraggableListDragHandleProps;
+}) {
+  const { group } = row;
+  const handleToggle = useCallback(
+    () => onToggleCollapsed(group.groupId),
+    [onToggleCollapsed, group.groupId],
+  );
+  const handleRename = useCallback(() => onRename(group), [onRename, group]);
+  const handleDelete = useCallback(() => onDelete(group), [onDelete, group]);
+
+  return (
+    <GroupSectionHeader
+      kind="project"
+      groupId={group.groupId}
+      groupName={group.groupName}
+      count={row.count}
+      collapsed={row.collapsed}
+      onToggle={handleToggle}
+      onRename={handleRename}
+      onDelete={handleDelete}
+      drag={drag}
+      isDragging={isDragging}
+      dragHandleProps={dragHandleProps}
+      testID={`sidebar-project-group-${group.groupId}`}
+    />
+  );
+});
+
+const WorkspaceGroupHeaderFlatRow = memo(function WorkspaceGroupHeaderFlatRow({
+  row,
+  onToggleCollapsed,
+  onRename,
+  onDelete,
+  drag,
+  isDragging,
+  dragHandleProps,
+}: {
+  row: SidebarWorkspaceGroupHeaderRow;
+  onToggleCollapsed: (collapseKey: string) => void;
+  onRename: (group: SidebarWorkspaceGroup) => void;
+  onDelete: (group: SidebarWorkspaceGroup) => void;
+  drag: () => void;
+  isDragging: boolean;
+  dragHandleProps?: DraggableListDragHandleProps;
+}) {
+  const { group } = row;
+  const handleToggle = useCallback(
+    () => onToggleCollapsed(group.groupId),
+    [onToggleCollapsed, group.groupId],
+  );
+  const handleRename = useCallback(() => onRename(group), [onRename, group]);
+  const handleDelete = useCallback(() => onDelete(group), [onDelete, group]);
+
+  return (
+    <GroupSectionHeader
+      kind="workspace"
+      groupId={group.groupId}
+      groupName={group.groupName}
+      count={row.count}
+      collapsed={row.collapsed}
+      onToggle={handleToggle}
+      onRename={handleRename}
+      onDelete={handleDelete}
+      drag={drag}
+      isDragging={isDragging}
+      dragHandleProps={dragHandleProps}
+      indented
+      testID={`sidebar-workspace-group-${row.projectKey}-${group.groupId}`}
+    />
+  );
+});
+
+// A remainder is the ABSENCE of a group, not a group: no glyph, no menu, no drag handle,
+// nothing to rename. It renders as a header anyway, because once everything has been
+// grouped that header is the only thing left to aim at — without it, nothing could ever be
+// dragged back out.
+const RemainderHeaderFlatRow = memo(function RemainderHeaderFlatRow({
+  kind,
+  collapseKey,
+  groupName,
+  count,
+  collapsed,
+  indented,
+  testID,
+  onToggleCollapsed,
+}: {
+  kind: SidebarGroupKind;
+  collapseKey: string;
+  groupName: string;
+  count: number;
+  collapsed: boolean;
+  indented?: boolean;
+  testID: string;
+  onToggleCollapsed: (collapseKey: string) => void;
+}) {
+  const handleToggle = useCallback(
+    () => onToggleCollapsed(collapseKey),
+    [onToggleCollapsed, collapseKey],
+  );
+  return (
+    <GroupSectionHeader
+      kind={kind}
+      ungrouped
+      groupId={collapseKey}
+      groupName={groupName}
+      count={count}
+      collapsed={collapsed}
+      onToggle={handleToggle}
+      indented={indented}
+      testID={testID}
+    />
+  );
+});
+
+const ShowMoreFlatRow = memo(function ShowMoreFlatRow({
+  row,
+  onToggleSection,
+}: {
+  row: SidebarShowMoreRow;
+  onToggleSection: (sectionKey: string) => void;
+}) {
+  const handlePress = useCallback(
+    () => onToggleSection(row.sectionKey),
+    [onToggleSection, row.sectionKey],
+  );
+  return (
+    <SidebarGroupToggleRow expanded={row.expanded} onPress={handlePress} testID={row.testID} />
+  );
+});
+
+// Which dialog the container is showing. One at a time, and never owned by a row.
+type SidebarActiveModal =
+  | { kind: "rename-workspace-group"; group: SidebarWorkspaceGroup }
+  | { kind: "rename-project-group"; group: SidebarProjectGroup }
+  | { kind: "new-workspace-group"; projectKey: string }
+  | { kind: "new-project-group"; project: GroupedSidebarProject };
+
+const MODAL_TITLE_KEYS = {
+  "rename-workspace-group": "sidebar.workspaceGroup.renameGroupTitle",
+  "rename-project-group": "sidebar.projectGroup.renameGroupTitle",
+  "new-workspace-group": "sidebar.workspaceGroup.newGroupTitle",
+  "new-project-group": "sidebar.projectGroup.newGroupTitle",
+} as const;
+
+const MODAL_PLACEHOLDER_KEYS = {
+  "rename-workspace-group": "sidebar.workspaceGroup.newGroupPlaceholder",
+  "rename-project-group": "sidebar.projectGroup.newGroupPlaceholder",
+  "new-workspace-group": "sidebar.workspaceGroup.newGroupPlaceholder",
+  "new-project-group": "sidebar.projectGroup.newGroupPlaceholder",
+} as const;
+
+// Kept project-scoped for the two "new group" dialogs even though one component now owns
+// them all: the id names which project the group is being created in, and the tests that
+// drive those dialogs address them that way.
+function modalTestID(modal: SidebarActiveModal): string {
+  switch (modal.kind) {
+    case "rename-workspace-group":
+      return "sidebar-group-rename-modal";
+    case "rename-project-group":
+      return "sidebar-project-group-rename-modal";
+    case "new-workspace-group":
+      return `sidebar-project-new-workspace-group-modal-${modal.projectKey}`;
+    case "new-project-group":
+      return `sidebar-project-new-group-modal-${modal.project.viewKey}`;
+  }
+}
+
+const EMPTY_GROUP_REFS: SidebarGroupRef[] = [];
+
+const flatRowKeyExtractor = (row: SidebarFlatRow) => row.key;
+
+// Native reshapes its rows one commit and one frame before the lift. This is the way back
+// out if a device turns out not to like that: with it off the header travels alone and the
+// drop means the same thing, since the policy resolves at block granularity either way.
+const COLLAPSE_ON_LIFT_NATIVE = true;
+
+// Enough rows to fill a tall sidebar on first paint. The whole sidebar is one list now, so
+// the default window would leave the lower half blank until the first scroll.
+const INITIAL_ROWS_TO_RENDER = 25;
+
+// The whole sidebar in project mode: ONE draggable list, which is also the scroll
+// container. Pinned rows, group headers, project rows, workspace rows and "show more"
+// toggles are all rows of it.
+//
+// It is flat because a drag has to cross group boundaries, and the only way a drag crosses
+// a boundary for free is if there is no boundary. The nested per-section lists this
+// replaced could only do it on web, through a second drag engine hoisted above them.
 function ProjectModeList({
   projects,
   pinnedGroups,
   workspaceEntriesByKey,
-  collapsedProjectKeys,
   onToggleProjectCollapsed,
   shortcutIndexByWorkspaceKey,
   onWorkspacePress,
@@ -2643,14 +2332,17 @@ function ProjectModeList({
 }) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const { t } = useTranslation();
+  const toast = useToast();
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
   const creatingWorkspaceTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
   const showShortcutBadges = useShowShortcutBadges();
-  const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
   const togglePinnedCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.togglePinnedCollapsed,
+  );
+  const toggleGroupCollapsed = useSidebarCollapsedSectionsStore(
+    (state) => state.toggleGroupCollapsed,
   );
 
   const getProjectOrder = useSidebarOrderStore((state) => state.getProjectOrder);
@@ -2665,33 +2357,11 @@ function ProjectModeList({
   const selectionEnabled = isWorkspaceRoute;
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const { pinnedChats, unpinnedProjects } = pinnedGroups;
-  const {
-    visibleItems: visiblePinnedChats,
-    expanded: pinnedChatsExpanded,
-    canToggle: canTogglePinnedChats,
-    toggleExpanded: togglePinnedChatsExpanded,
-  } = useLimitedSidebarGroup(pinnedChats);
   // Groups organise what is left after the Pinned section has hoisted its chats out,
   // so this runs on unpinnedProjects, never on the raw project list.
   const groupedSidebar = useSidebarGroups(unpinnedProjects);
   const projectIconTargets = useMemo(() => resolveSidebarProjectIconTargets(projects), [projects]);
-  const nativeScrollGestureProps = useMemo(
-    () =>
-      parentGestureRef
-        ? ({
-            // NestableScrollContainer forwards props to RNGH ScrollView. Keep
-            // vertical scroll and sidebar close pan simultaneous: vertical
-            // intent scrolls immediately, clear horizontal intent can still
-            // activate close from inside the list.
-            simultaneousHandlers: parentGestureRef,
-          } as object)
-        : undefined,
-    [parentGestureRef],
-  );
-
-  const projectIconByProjectViewKey = useProjectIcons({
-    projects: projectIconTargets,
-  });
+  const projectIconByProjectViewKey = useProjectIcons({ projects: projectIconTargets });
 
   useEffect(() => {
     const timeouts = creatingWorkspaceTimeoutsRef.current;
@@ -2739,327 +2409,6 @@ function ProjectModeList({
     });
   }, [creatingWorkspaceIds, projects]);
 
-  // One hook for every layout write in this component. Both levels edit the same
-  // document, so there is no reason for two.
-  const {
-    isAvailable: isLayoutAvailable,
-    assignProjectGroup,
-    renameProjectGroup,
-    deleteProjectGroup,
-    reorderProjectGroups,
-    reorderProjectsInGroup,
-    moveProjectToGroup,
-    renameWorkspaceGroup,
-    deleteWorkspaceGroup,
-    moveWorkspaceToGroup,
-    reorderWorkspaceGroups,
-    reorderWorkspacesInGroup,
-    setPinnedWorkspaceOrder,
-    previewWorkspaceMove,
-    previewProjectMove,
-    cancelMovePreview,
-  } = useGroupActions();
-
-  // Every list the sidebar draws IS a document array, so a drag can hand its list
-  // straight back — no merge, no slot arithmetic. The local order store is still written
-  // when no host can hold a layout (an old daemon), which is the only case where it is
-  // still the thing being read.
-  const handleProjectDragEnd = useCallback(
-    (reorderedProjects: SidebarProjectEntry[]) => {
-      const reorderedProjectKeys = reorderedProjects.map((project) => project.viewKey);
-      if (isLayoutAvailable) {
-        reorderProjectsInGroup({ groupId: null, orderedVisibleKeys: reorderedProjectKeys });
-        return;
-      }
-
-      const currentProjectOrder = getProjectOrder();
-      if (
-        !hasVisibleOrderChanged({
-          currentOrder: currentProjectOrder,
-          reorderedVisibleKeys: reorderedProjectKeys,
-        })
-      ) {
-        return;
-      }
-
-      setProjectOrder(
-        mergeWithRemainder({
-          currentOrder: currentProjectOrder,
-          reorderedVisibleKeys: reorderedProjectKeys,
-        }),
-      );
-    },
-    [isLayoutAvailable, reorderProjectsInGroup, getProjectOrder, setProjectOrder],
-  );
-
-  // Same slot-preserving reorder as workspaces: a project group's drag list only
-  // sees its own members, and hoisting them to the front would move the group.
-  const handleProjectGroupDragEnd = useCallback(
-    (groupId: string, reorderedProjects: GroupedSidebarProject[]) => {
-      const reorderedProjectKeys = reorderedProjects.map((project) => project.viewKey);
-      if (isLayoutAvailable) {
-        reorderProjectsInGroup({ groupId, orderedVisibleKeys: reorderedProjectKeys });
-        return;
-      }
-
-      const currentProjectOrder = getProjectOrder();
-      if (
-        !hasVisibleOrderChanged({
-          currentOrder: currentProjectOrder,
-          reorderedVisibleKeys: reorderedProjectKeys,
-        })
-      ) {
-        return;
-      }
-
-      setProjectOrder(
-        mergeWithinSlots({
-          currentOrder: currentProjectOrder,
-          reorderedVisibleKeys: reorderedProjectKeys,
-        }),
-      );
-    },
-    [isLayoutAvailable, reorderProjectsInGroup, getProjectOrder, setProjectOrder],
-  );
-
-  // Every project group that exists anywhere in the sidebar, offered as a move target
-  // on every project row.
-  const availableProjectGroups = useMemo<SidebarGroupRef[]>(
-    () =>
-      groupedSidebar.projectGroups.map((group) => ({
-        groupId: group.groupId,
-        groupName: group.groupName,
-      })),
-    [groupedSidebar.projectGroups],
-  );
-
-  // The dropped row takes the slot of whatever it landed on, in the project's single
-  // flat order. That is what makes it appear inside the target group next to that row
-  // instead of springing back to its old group.
-  // Covers BOTH cases the drag context can produce: a row dropped on another row (which
-  // may be in a different group), and a row dropped on a group HEADER — the only way to
-  // fill an empty group, since it has no rows to drop between. A null overWorkspaceKey
-  // means "no position was named", so it lands at the end.
-  const handleWorkspaceGroupDrop = useCallback(
-    (projectKey: string, event: SidebarGroupDropEvent, visibleKeys: readonly string[]) => {
-      moveWorkspaceToGroup({
-        projectKey,
-        workspaceKey: event.itemKey,
-        groupId: event.toGroupId,
-        beforeKey: event.overItemKey,
-        after: event.after,
-        visibleKeys,
-      });
-    },
-    [moveWorkspaceToGroup],
-  );
-
-  const handleWorkspaceGroupsReorder = useCallback(
-    (projectKey: string, orderedGroupIds: string[]) => {
-      reorderWorkspaceGroups({ projectKey, orderedIds: orderedGroupIds });
-    },
-    [reorderWorkspaceGroups],
-  );
-
-  // Shown, not saved. The drop commits it; abandoning the drag throws it away.
-  const handleWorkspaceGroupDragPreview = useCallback(
-    (projectKey: string, event: SidebarGroupDropEvent, visibleKeys: readonly string[]) => {
-      previewWorkspaceMove({
-        projectKey,
-        workspaceKey: event.itemKey,
-        groupId: event.toGroupId,
-        beforeKey: event.overItemKey,
-        after: event.after,
-        visibleKeys,
-      });
-    },
-    [previewWorkspaceMove],
-  );
-
-  const handleSetProjectGroup = useCallback(
-    (project: GroupedSidebarProject, assignment: GroupAssignment) => {
-      assignProjectGroup([project.viewKey], assignment);
-    },
-    [assignProjectGroup],
-  );
-
-  const [renamingProjectGroup, setRenamingProjectGroup] = useState<SidebarProjectGroup | null>(
-    null,
-  );
-
-  const handleRenameProjectGroup = useCallback((group: SidebarProjectGroup) => {
-    setRenamingProjectGroup(group);
-  }, []);
-
-  const handleCloseRenameProjectGroup = useCallback(() => {
-    setRenamingProjectGroup(null);
-  }, []);
-
-  const handleSubmitRenameProjectGroup = useCallback(
-    (nextName: string) => {
-      if (!renamingProjectGroup) {
-        return;
-      }
-      const trimmed = nextName.trim();
-      if (trimmed.length > 0) {
-        // One edit. The group is an entity, so renaming it does not mean rewriting
-        // every row that happens to be inside it.
-        renameProjectGroup(renamingProjectGroup.groupId, trimmed);
-      }
-      setRenamingProjectGroup(null);
-    },
-    [renamingProjectGroup, renameProjectGroup],
-  );
-
-  const handleDeleteProjectGroup = useCallback(
-    (group: SidebarProjectGroup) => {
-      void (async () => {
-        const confirmed = await confirmDialog({
-          title: t("sidebar.projectGroup.confirmations.deleteTitle"),
-          message: t("sidebar.projectGroup.confirmations.deleteMessage", {
-            groupName: group.groupName,
-          }),
-          confirmLabel: t("sidebar.group.deleteConfirm"),
-          cancelLabel: t("sidebar.group.cancel"),
-          destructive: true,
-        });
-        if (!confirmed) {
-          return;
-        }
-        // Deleting a group never deletes what was in it: the projects fall back to
-        // ungrouped, in the order they had inside the group.
-        deleteProjectGroup(group.groupId);
-      })();
-    },
-    [deleteProjectGroup, t],
-  );
-
-  // A group's drag list only ever sees its own members, so the reordered keys are a
-  // subset. mergeWithRemainder would hoist them to the front of the project, which
-  // would drag the whole group to the top. mergeWithinSlots permutes them inside the
-  // slots they already hold, leaving every other row (and every other group) put.
-  const handleWorkspaceGroupReorder = useCallback(
-    (
-      projectKey: string,
-      groupId: string | null,
-      reorderedWorkspaces: SidebarWorkspacePlacement[],
-    ) => {
-      const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
-      if (isLayoutAvailable) {
-        reorderWorkspacesInGroup({
-          projectKey,
-          groupId,
-          orderedVisibleKeys: reorderedWorkspaceKeys,
-        });
-        return;
-      }
-
-      const currentWorkspaceOrder = getWorkspaceOrder(projectKey);
-      if (
-        !hasVisibleOrderChanged({
-          currentOrder: currentWorkspaceOrder,
-          reorderedVisibleKeys: reorderedWorkspaceKeys,
-        })
-      ) {
-        return;
-      }
-
-      setWorkspaceOrder(
-        projectKey,
-        mergeWithinSlots({
-          currentOrder: currentWorkspaceOrder,
-          reorderedVisibleKeys: reorderedWorkspaceKeys,
-        }),
-      );
-    },
-    [isLayoutAvailable, reorderWorkspacesInGroup, getWorkspaceOrder, setWorkspaceOrder],
-  );
-
-  const [renamingGroup, setRenamingGroup] = useState<{
-    group: SidebarWorkspaceGroup;
-    project: GroupedSidebarProject;
-  } | null>(null);
-
-  const handleRenameWorkspaceGroup = useCallback(
-    (group: SidebarWorkspaceGroup, project: GroupedSidebarProject) => {
-      setRenamingGroup({ group, project });
-    },
-    [],
-  );
-
-  const handleCloseRenameGroup = useCallback(() => {
-    setRenamingGroup(null);
-  }, []);
-
-  const handleSubmitRenameGroup = useCallback(
-    (nextName: string) => {
-      if (!renamingGroup) {
-        return;
-      }
-      const trimmed = nextName.trim();
-      if (trimmed.length > 0) {
-        renameWorkspaceGroup(renamingGroup.group.groupId, trimmed);
-      }
-      setRenamingGroup(null);
-    },
-    [renamingGroup, renameWorkspaceGroup],
-  );
-
-  const handleDeleteWorkspaceGroup = useCallback(
-    (group: SidebarWorkspaceGroup, _project: GroupedSidebarProject) => {
-      void (async () => {
-        const confirmed = await confirmDialog({
-          title: t("sidebar.workspaceGroup.confirmations.deleteTitle"),
-          message: t("sidebar.workspaceGroup.confirmations.deleteMessage", {
-            groupName: group.groupName,
-          }),
-          confirmLabel: t("sidebar.group.deleteConfirm"),
-          cancelLabel: t("sidebar.group.cancel"),
-          destructive: true,
-        });
-        if (!confirmed) {
-          return;
-        }
-        // The workspaces are untouched; they fall back to ungrouped.
-        deleteWorkspaceGroup(group.groupId);
-      })();
-    },
-    [deleteWorkspaceGroup, t],
-  );
-
-  const handleWorkspaceReorder = useCallback(
-    (projectViewKey: string, reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
-      const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
-      if (isLayoutAvailable) {
-        reorderWorkspacesInGroup({
-          projectKey: projectViewKey,
-          groupId: null,
-          orderedVisibleKeys: reorderedWorkspaceKeys,
-        });
-        return;
-      }
-
-      const currentWorkspaceOrder = getWorkspaceOrder(projectViewKey);
-      if (
-        !hasVisibleOrderChanged({
-          currentOrder: currentWorkspaceOrder,
-          reorderedVisibleKeys: reorderedWorkspaceKeys,
-        })
-      ) {
-        return;
-      }
-
-      setWorkspaceOrder(
-        projectViewKey,
-        mergeWithRemainder({
-          currentOrder: currentWorkspaceOrder,
-          reorderedVisibleKeys: reorderedWorkspaceKeys,
-        }),
-      );
-    },
-    [isLayoutAvailable, reorderWorkspacesInGroup, getWorkspaceOrder, setWorkspaceOrder],
-  );
-
   const handleWorktreeCreated = useCallback((workspaceId: string) => {
     setCreatingWorkspaceIds((current) => {
       const next = new Set(current);
@@ -3086,404 +2435,667 @@ function ProjectModeList({
     );
   }, []);
 
-  const renderProjectBlock = useCallback(
-    (
-      item: GroupedSidebarProject,
-      dragState: {
-        drag: () => void;
-        isDragging: boolean;
-        dragHandleProps?: DraggableRenderItemInfo<GroupedSidebarProject>["dragHandleProps"];
-      },
-      // The drag overlay renders the block COLLAPSED: you grabbed the project's header,
-      // and that is what should follow the cursor. Carrying the whole block — every
-      // workspace group and every row under it — blankets the sidebar you are trying to
-      // aim at, and hides the very drop targets the drag is for.
-      forceCollapsed = false,
-    ) => {
-      return (
-        <MemoProjectBlock
-          key={item.viewKey}
-          project={item}
-          workspaceEntriesByKey={workspaceEntriesByKey}
-          collapsed={forceCollapsed || collapsedProjectKeys.has(item.viewKey)}
-          displayName={item.projectName}
-          iconDataUri={projectIconByProjectViewKey.get(item.viewKey) ?? null}
-          selectionEnabled={selectionEnabled}
-          showShortcutBadges={showShortcutBadges}
-          shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-          parentGestureRef={parentGestureRef}
-          onToggleCollapsed={onToggleProjectCollapsed}
-          onWorkspacePress={onWorkspacePress}
-          onWorkspaceReorder={handleWorkspaceReorder}
-          onWorkspaceGroupReorder={handleWorkspaceGroupReorder}
-          onRenameGroup={handleRenameWorkspaceGroup}
-          onDeleteGroup={handleDeleteWorkspaceGroup}
-          availableProjectGroups={availableProjectGroups}
-          onSetProjectGroup={handleSetProjectGroup}
-          onWorkspaceGroupDrop={handleWorkspaceGroupDrop}
-          onWorkspaceGroupDragPreview={handleWorkspaceGroupDragPreview}
-          onWorkspaceGroupDragPreviewCancel={cancelMovePreview}
-          onWorkspaceGroupsReorder={handleWorkspaceGroupsReorder}
-          onWorktreeCreated={handleWorktreeCreated}
-          drag={dragState.drag}
-          isDragging={dragState.isDragging}
-          dragHandleProps={dragState.dragHandleProps}
-          useNestable={platformIsNative}
-          dragGestureHostPresented={dragGestureHostPresented}
-          creatingWorkspaceIds={creatingWorkspaceIds}
-          activeWorkspaceSelection={activeWorkspaceSelection}
-          hostBadgeByServerId={hostBadgeByServerId}
-          supportsMultiplicityByServerId={supportsMultiplicityByServerId}
-          supportsPinningByServerId={supportsPinningByServerId}
-          isLayoutAvailable={isLayoutAvailable}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-        />
+  // One hook for every layout write in this component. Both levels edit the same
+  // document, so there is no reason for two.
+  const {
+    isAvailable: isLayoutAvailable,
+    assignProjectGroup,
+    createWorkspaceGroup,
+    renameProjectGroup,
+    deleteProjectGroup,
+    renameWorkspaceGroup,
+    deleteWorkspaceGroup,
+    applyDropIntent,
+  } = useGroupActions();
+
+  const { rows, buildRowsForDrag, toggleSection } = useSidebarFlatRows({
+    grouped: groupedSidebar,
+    pinnedChats,
+    hasProjects: projects.length > 0,
+    // The label earns its space only when something follows it, or when a host filter is
+    // the reason nothing does.
+    showWorkspacesHeader: unpinnedProjects.length > 0 || hasActiveHostFilter,
+    supportsMultiplicityByServerId,
+  });
+
+  const projectByKey = useMemo(() => {
+    const byKey = new Map<string, GroupedSidebarProject>();
+    for (const group of groupedSidebar.projectGroups) {
+      for (const project of group.projects) {
+        byKey.set(project.viewKey, project);
+      }
+    }
+    for (const project of groupedSidebar.ungroupedProjects) {
+      byKey.set(project.viewKey, project);
+    }
+    return byKey;
+  }, [groupedSidebar]);
+
+  // Built once per project rather than per row: a row does not know which groups its
+  // project has, and deriving it per row would subscribe every row to the whole document.
+  const workspaceGroupRefsByProject = useMemo(() => {
+    const byKey = new Map<string, SidebarGroupRef[]>();
+    for (const [projectKey, project] of projectByKey) {
+      byKey.set(
+        projectKey,
+        project.workspaceGroups.map((group) => ({
+          groupId: group.groupId,
+          groupName: group.groupName,
+        })),
       );
-    },
-    [
-      collapsedProjectKeys,
-      activeWorkspaceSelection,
-      handleWorktreeCreated,
-      handleWorkspaceReorder,
-      handleWorkspaceGroupReorder,
-      handleWorkspaceGroupDragPreview,
-      cancelMovePreview,
-      handleRenameWorkspaceGroup,
-      handleDeleteWorkspaceGroup,
-      availableProjectGroups,
-      handleSetProjectGroup,
-      handleWorkspaceGroupsReorder,
-      handleWorkspaceGroupDrop,
-      hostBadgeByServerId,
-      supportsMultiplicityByServerId,
-      supportsPinningByServerId,
-      isLayoutAvailable,
-      onToggleWorkspacePin,
-      onWorkspacePress,
-      onToggleProjectCollapsed,
-      parentGestureRef,
-      dragGestureHostPresented,
-      projectIconByProjectViewKey,
-      selectionEnabled,
-      shortcutIndexByWorkspaceKey,
-      showShortcutBadges,
-      workspaceEntriesByKey,
-      creatingWorkspaceIds,
-    ],
-  );
+    }
+    return byKey;
+  }, [projectByKey]);
 
-  const renderProject = useCallback(
-    ({ item, drag, isActive, dragHandleProps }: DraggableRenderItemInfo<GroupedSidebarProject>) =>
-      renderProjectBlock(item, { drag, isDragging: isActive, dragHandleProps }),
-    [renderProjectBlock],
-  );
-
-  const projectGroupIds = useMemo(
-    () => groupedSidebar.projectGroups.map((group) => group.groupId),
+  const availableProjectGroups = useMemo<SidebarGroupRef[]>(
+    () =>
+      groupedSidebar.projectGroups.map((group) => ({
+        groupId: group.groupId,
+        groupName: group.groupName,
+      })),
     [groupedSidebar.projectGroups],
   );
 
-  // A project dropped onto another group. One edit: the document holds membership and
-  // position together, so there is nothing else to keep in step.
-  const handleProjectGroupDrop = useCallback(
-    (event: SidebarGroupDropEvent) => {
-      moveProjectToGroup({
-        projectKey: event.itemKey,
-        groupId: event.toGroupId,
-        beforeKey: event.overItemKey,
-        after: event.after,
-        visibleKeys: visibleProjectKeys(groupedSidebar, event.toGroupId),
-      });
-    },
-    [moveProjectToGroup, groupedSidebar],
-  );
+  // ---------------------------------------------------------------------------
+  // Drag
+  // ---------------------------------------------------------------------------
 
-  // Shown, not saved: opens the gap in the group under the cursor. The drop commits it.
-  const handleProjectGroupDragPreview = useCallback(
-    (event: SidebarGroupDropEvent) => {
-      previewProjectMove({
-        projectKey: event.itemKey,
-        groupId: event.toGroupId,
-        beforeKey: event.overItemKey,
-        after: event.after,
-        visibleKeys: visibleProjectKeys(groupedSidebar, event.toGroupId),
-      });
-    },
-    [previewProjectMove, groupedSidebar],
-  );
+  // The rows a drag runs against, frozen for its duration. A replica arriving mid-drag
+  // must not reshape the list under the finger — on native it would cancel the drag
+  // outright — and the drop is anchored to keys rather than indices, so applying it to a
+  // document that has moved on is still well defined.
+  const [dragState, setDragState] = useState<{
+    origin: SidebarDragOrigin;
+    rows: SidebarFlatRow[];
+  } | null>(null);
+  const pendingDragRef = useRef<(() => void) | null>(null);
+  const listData = dragState?.rows ?? rows;
 
-  // The row that follows the cursor. Same renderer the list uses, so what is under the
-  // cursor is what you grabbed.
-  const renderProjectDragOverlay = useCallback(
-    (projectKey: string) => {
-      const project =
-        groupedSidebar.projectGroups
-          .flatMap((group) => group.projects)
-          .find((entry) => entry.viewKey === projectKey) ??
-        groupedSidebar.ungroupedProjects.find((entry) => entry.viewKey === projectKey);
-      if (!project) {
-        return null;
+  const endDrag = useCallback(() => {
+    pendingDragRef.current = null;
+    setDragState(null);
+  }, []);
+
+  // NATIVE: the rows have to be reshaped BEFORE the drag activates, because the list
+  // cancels any drag whose data changes. So the row arms instead of dragging: state, then
+  // one commit, then one frame for the cells to lay out at their new offsets, and only
+  // then the lift.
+  const armDrag = useCallback(
+    (row: SidebarFlatRow, startDrag: () => void) => {
+      const origin = dragOriginForRow(row);
+      if (!origin) {
+        return;
       }
-      return renderProjectBlock(project, { drag: noop, isDragging: true }, true);
+      pendingDragRef.current = startDrag;
+      setDragState({ origin, rows: buildRowsForDrag(origin) });
     },
-    [groupedSidebar.projectGroups, groupedSidebar.ungroupedProjects, renderProjectBlock],
+    [buildRowsForDrag],
   );
 
-  // Reordering the groups is one edit to the document: array order IS group order, so
-  // there is no rank to renumber and nothing for two devices to disagree about.
-  const handleProjectGroupOrderChange = useCallback(
-    (orderedGroupIds: string[]) => {
-      reorderProjectGroups(orderedGroupIds);
+  useEffect(() => {
+    if (!dragState || !pendingDragRef.current) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      const startDrag = pendingDragRef.current;
+      pendingDragRef.current = null;
+      startDrag?.();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [dragState]);
+
+  // WEB: dnd-kit measures from the DOM at drag start, so the rows can be reshaped there.
+  // The drag then runs against whatever this returns.
+  const handleDragSnapshot = useCallback(
+    (data: SidebarFlatRow[], from: number) => {
+      const row = data[from];
+      const origin = row ? dragOriginForRow(row) : null;
+      if (!origin) {
+        return data;
+      }
+      const next = buildRowsForDrag(origin);
+      setDragState({ origin, rows: next });
+      return next;
     },
-    [reorderProjectGroups],
+    [buildRowsForDrag],
   );
 
-  const renderPinnedChat = useCallback(
-    (
-      workspace: SidebarWorkspacePlacement,
-      dragInfo?: Pick<
-        DraggableRenderItemInfo<SidebarWorkspacePlacement>,
-        "drag" | "dragHandleProps"
-      > & { isDragging: boolean },
-    ) => {
-      return (
-        <MemoWorkspaceRowItem
-          key={workspace.workspaceKey}
-          workspace={workspace}
-          workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
-          hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
-          leadingProjectName={workspace.projectName}
-          leadingProjectIconDataUri={
-            projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
-          }
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          canCopyBranchName={workspace.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(workspace.serverId) === true}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-          isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
-          selectionEnabled={selectionEnabled}
-          activeWorkspaceSelection={activeWorkspaceSelection}
-          onWorkspacePress={onWorkspacePress}
-          drag={dragInfo?.drag}
-          isDragging={dragInfo?.isDragging}
-          dragHandleProps={dragInfo?.dragHandleProps}
-        />
-      );
+  const canDragRow = useCallback(
+    (row: SidebarFlatRow) => {
+      if (!isDraggableRow(row)) {
+        return false;
+      }
+      // Pinned order lives in the layout document and nowhere else, so a host too old to
+      // hold one leaves the section in pinnedAt order rather than in an order the user
+      // arranged and then lost.
+      if (row.kind === "pinned-workspace") {
+        return isLayoutAvailable;
+      }
+      return true;
+    },
+    [isLayoutAvailable],
+  );
+
+  const getValidSlotsForDrag = useCallback(
+    (data: SidebarFlatRow[], from: number) => validSlots(data, from),
+    [],
+  );
+
+  const handleDrop = useCallback(
+    (_data: SidebarFlatRow[], meta: DraggableListDropMeta) => {
+      const dragRows = dragState?.rows ?? rows;
+      endDrag();
+
+      const intent = interpretSidebarDrop(dragRows, meta.from, meta.to);
+      if (isLayoutAvailable) {
+        applyDropIntent(intent);
+        return;
+      }
+
+      // No host can store a layout, so grouping is not on screen and the only drop that
+      // can have happened is a plain reorder. It goes to the local order store, which is
+      // the only thing being read in that case.
+      const fallback = legacyDropFallback(intent);
+      if (!fallback) {
+        return;
+      }
+      const currentOrder =
+        fallback.kind === "reorder-projects"
+          ? getProjectOrder()
+          : getWorkspaceOrder(fallback.projectKey);
+      if (
+        !hasVisibleOrderChanged({
+          currentOrder,
+          reorderedVisibleKeys: fallback.orderedVisibleKeys,
+        })
+      ) {
+        return;
+      }
+      const merged = mergeWithRemainder({
+        currentOrder,
+        reorderedVisibleKeys: fallback.orderedVisibleKeys,
+      });
+      if (fallback.kind === "reorder-projects") {
+        setProjectOrder(merged);
+      } else {
+        setWorkspaceOrder(fallback.projectKey, merged);
+      }
     },
     [
-      activeWorkspaceSelection,
-      creatingWorkspaceIds,
-      hostBadgeByServerId,
-      onWorkspacePress,
-      selectionEnabled,
-      shortcutIndexByWorkspaceKey,
-      showShortcutBadges,
-      supportsPinningByServerId,
-      onToggleWorkspacePin,
-      projectIconByProjectViewKey,
-      workspaceEntriesByKey,
+      dragState,
+      rows,
+      endDrag,
+      isLayoutAvailable,
+      applyDropIntent,
+      getProjectOrder,
+      setProjectOrder,
+      getWorkspaceOrder,
+      setWorkspaceOrder,
     ],
   );
 
-  const renderPinnedItem = useCallback(
-    ({
-      item,
-      drag,
-      isActive,
-      dragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) =>
-      renderPinnedChat(item, { drag, isDragging: isActive, dragHandleProps }),
-    [renderPinnedChat],
+  // ---------------------------------------------------------------------------
+  // Dialogs and mutations, all owned here
+  // ---------------------------------------------------------------------------
+
+  const [activeModal, setActiveModal] = useState<SidebarActiveModal | null>(null);
+  const closeModal = useCallback(() => setActiveModal(null), []);
+  const [removingProjectKeys, setRemovingProjectKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
   );
 
-  // The Pinned section owns its drag outright — it is one flat list and nothing can be
-  // dragged into or out of it (pinning is the ⋯ menu's job), so it needs none of the shared
-  // group drag context. Which also means it reorders on native, where a drag cannot cross
-  // between lists at all.
-  const handlePinnedDragEnd = useCallback(
-    (reordered: SidebarWorkspacePlacement[]) => {
-      setPinnedWorkspaceOrder(reordered.map((workspace) => workspace.workspaceKey));
+  const handleSetProjectGroup = useCallback(
+    (project: GroupedSidebarProject, assignment: GroupAssignment) => {
+      assignProjectGroup([project.viewKey], assignment);
     },
-    [setPinnedWorkspaceOrder],
+    [assignProjectGroup],
   );
 
-  const pinnedBody = useMemo(() => {
-    if (pinnedCollapsed) {
-      return null;
-    }
-    // Cap the initial render at the same 20-row limit every other sidebar list uses, with a
-    // "show more" toggle past that. Drag reorders only the VISIBLE rows, but the pinned-order
-    // write folds a visible reorder back into the full order (mergeWithinSlots), so the hidden
-    // tail keeps its place — you never lose the rows beyond the cap by rearranging the ones on
-    // screen. Pinning 20+ workspaces is pathological, so this rarely bites at all.
-    const toggle = canTogglePinnedChats ? (
-      <SidebarGroupToggleRow
-        expanded={pinnedChatsExpanded}
-        onPress={togglePinnedChatsExpanded}
-        testID="sidebar-pinned-show-more"
-      />
-    ) : null;
-    // No host can store a layout, so there is no order to write. The section still renders
-    // — pinning itself is older than this document and does not depend on it — it simply
-    // cannot be rearranged, and stays in pinnedAt order.
-    if (!isLayoutAvailable) {
-      return (
-        <>
-          {visiblePinnedChats.map((workspace) => renderPinnedChat(workspace))}
-          {toggle}
-        </>
-      );
-    }
-    return (
-      <>
-        <DraggableList
-          testID="sidebar-pinned-list"
-          data={visiblePinnedChats}
-          keyExtractor={workspaceKeyExtractor}
-          renderItem={renderPinnedItem}
-          onDragEnd={handlePinnedDragEnd}
-          scrollEnabled={false}
-          useDragHandle
-          nestable={platformIsNative}
-          simultaneousGestureRef={parentGestureRef}
-          extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-        />
-        {toggle}
-      </>
-    );
-  }, [
-    activeWorkspaceSelection,
-    canTogglePinnedChats,
-    handlePinnedDragEnd,
-    isLayoutAvailable,
-    parentGestureRef,
-    pinnedChatsExpanded,
-    pinnedCollapsed,
-    renderPinnedChat,
-    renderPinnedItem,
-    togglePinnedChatsExpanded,
-    visiblePinnedChats,
-  ]);
+  const handleSubmitModal = useCallback(
+    (nextName: string) => {
+      const trimmed = nextName.trim();
+      setActiveModal(null);
+      if (!activeModal || trimmed.length === 0) {
+        return;
+      }
+      switch (activeModal.kind) {
+        case "rename-workspace-group":
+          renameWorkspaceGroup(activeModal.group.groupId, trimmed);
+          return;
+        // One edit. The group is an entity, so renaming it does not mean rewriting every
+        // row that happens to be inside it.
+        case "rename-project-group":
+          renameProjectGroup(activeModal.group.groupId, trimmed);
+          return;
+        case "new-workspace-group":
+          createWorkspaceGroup({ projectKey: activeModal.projectKey, name: trimmed });
+          return;
+        case "new-project-group":
+          handleSetProjectGroup(activeModal.project, {
+            groupId: createGroupId(),
+            groupName: trimmed,
+          });
+      }
+    },
+    [
+      activeModal,
+      renameWorkspaceGroup,
+      renameProjectGroup,
+      createWorkspaceGroup,
+      handleSetProjectGroup,
+    ],
+  );
 
-  const content = (
-    <>
-      {pinnedChats.length > 0 ? (
-        <View style={styles.pinnedSection} testID="sidebar-pinned-section">
-          <PinnedSectionHeader collapsed={pinnedCollapsed} onToggle={togglePinnedCollapsed} />
-          {pinnedBody}
-        </View>
-      ) : null}
-      {unpinnedProjects.length > 0 || hasActiveHostFilter ? listHeaderComponent : null}
-      {projects.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyTitle} testID="sidebar-project-empty-state">
-            {t("sidebar.project.empty.title")}
-          </Text>
-          <Text style={styles.emptyText}>{t("sidebar.project.empty.description")}</Text>
-          <Button variant="ghost" size="sm" leftIcon={Plus} onPress={onAddProject}>
-            {t("sidebar.actions.addProject")}
-          </Button>
-        </View>
-      ) : (
-        <>
-          {/* ONE drag context for the whole project level: the group sections, the
-              projects inside them, and the ungrouped remainder. Each group's project list
-              used to own a DndContext of its own, and dnd-kit cannot move an item between
-              two of them — so a project could never be dropped into another group. The
-              same context makes each group HEADER a drop target, which is how a project
-              lands in a group that is still empty. */}
-          <SidebarGroupDragContext
-            groupIds={projectGroupIds}
-            onDrop={handleProjectGroupDrop}
-            onReorderGroups={handleProjectGroupOrderChange}
-            renderDragOverlay={renderProjectDragOverlay}
-            onDragPreview={handleProjectGroupDragPreview}
-            onDragPreviewCancel={cancelMovePreview}
-          >
-            {groupedSidebar.projectGroups.map((group) => (
-              <ProjectGroupSection
-                key={group.groupId}
-                group={group}
-                renderProject={renderProject}
-                keyExtractor={projectViewKeyExtractor}
-                onDragEnd={handleProjectGroupDragEnd}
-                extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-                parentGestureRef={parentGestureRef}
-                onRename={handleRenameProjectGroup}
-                onDelete={handleDeleteProjectGroup}
-                useNestable={platformIsNative}
-              />
-            ))}
-            {/* The remainder is the absence of a group, not a group: a plain section
-                label, no chevron, no folder, nothing to rename. It only earns its space
-                once a real project group exists — otherwise it would be a label over the
-                whole sidebar, which is exactly the change a non-user must never see. It
-                IS a drop target though, and appears while a project is in flight even
-                when empty, or a project grouped away could never be dragged back out. */}
-            <UngroupedProjectSection
-              projects={groupedSidebar.ungroupedProjects}
-              hasProjectGroups={groupedSidebar.projectGroups.length > 0}
-              renderProject={renderProject}
-              keyExtractor={projectViewKeyExtractor}
-              onDragEnd={handleProjectDragEnd}
-              extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-              parentGestureRef={parentGestureRef}
-              useNestable={platformIsNative}
+  const handleDeleteProjectGroup = useCallback(
+    (group: SidebarProjectGroup) => {
+      void (async () => {
+        const confirmed = await confirmDialog({
+          title: t("sidebar.projectGroup.confirmations.deleteTitle"),
+          message: t("sidebar.projectGroup.confirmations.deleteMessage", {
+            groupName: group.groupName,
+          }),
+          confirmLabel: t("sidebar.group.deleteConfirm"),
+          cancelLabel: t("sidebar.group.cancel"),
+          destructive: true,
+        });
+        if (!confirmed) {
+          return;
+        }
+        // Deleting a group never deletes what was in it: the projects fall back to
+        // ungrouped, in the order they had inside the group.
+        deleteProjectGroup(group.groupId);
+      })();
+    },
+    [deleteProjectGroup, t],
+  );
+
+  const handleDeleteWorkspaceGroup = useCallback(
+    (group: SidebarWorkspaceGroup) => {
+      void (async () => {
+        const confirmed = await confirmDialog({
+          title: t("sidebar.workspaceGroup.confirmations.deleteTitle"),
+          message: t("sidebar.workspaceGroup.confirmations.deleteMessage", {
+            groupName: group.groupName,
+          }),
+          confirmLabel: t("sidebar.group.deleteConfirm"),
+          cancelLabel: t("sidebar.group.cancel"),
+          destructive: true,
+        });
+        if (!confirmed) {
+          return;
+        }
+        // The workspaces are untouched; they fall back to ungrouped.
+        deleteWorkspaceGroup(group.groupId);
+      })();
+    },
+    [deleteWorkspaceGroup, t],
+  );
+
+  const handleRemoveProject = useCallback(
+    (project: GroupedSidebarProject) => {
+      const markRemoving = (removing: boolean) =>
+        setRemovingProjectKeys((current) => {
+          const next = new Set(current);
+          if (removing) {
+            next.add(project.viewKey);
+          } else {
+            next.delete(project.viewKey);
+          }
+          return next;
+        });
+
+      void (async () => {
+        const confirmed = await confirmDialog({
+          title: t("sidebar.project.confirmations.removeTitle"),
+          message: t("sidebar.project.confirmations.removeMessage", {
+            projectName: project.projectName,
+          }),
+          confirmLabel: t("sidebar.project.confirmations.removeConfirm"),
+          cancelLabel: t("sidebar.project.confirmations.cancel"),
+          destructive: true,
+        });
+        if (!confirmed) {
+          return;
+        }
+
+        markRemoving(true);
+        const readiness = getCurrentProjectRemoveReadiness({ hosts: project.hosts });
+        if (readiness.kind === "needs_host_update") {
+          toast.error(t("sidebar.project.toasts.updateHostToRemove"));
+          markRemoving(false);
+          return;
+        }
+
+        void removeProjectFromHosts({
+          targets: readiness.targets,
+          getClient: (serverId) => getHostRuntimeStore().getClient(serverId),
+        })
+          .then((outcome) => {
+            if (outcome.kind === "host_disconnected") {
+              toast.error(t("sidebar.project.toasts.hostDisconnected"));
+              return null;
+            }
+            if (outcome.kind === "failed") {
+              toast.error(t("sidebar.project.toasts.removeFailed"));
+            }
+            return null;
+          })
+          .catch((error) => {
+            toast.error(
+              error instanceof Error ? error.message : t("sidebar.project.toasts.removeFailed"),
+            );
+          })
+          .finally(() => {
+            markRemoving(false);
+          });
+      })();
+    },
+    [t, toast],
+  );
+
+  const handleOpenNewWorkspaceGroup = useCallback((projectKey: string) => {
+    setActiveModal({ kind: "new-workspace-group", projectKey });
+  }, []);
+
+  const handleOpenNewProjectGroup = useCallback((project: GroupedSidebarProject) => {
+    setActiveModal({ kind: "new-project-group", project });
+  }, []);
+
+  const handleRenameProjectGroup = useCallback((group: SidebarProjectGroup) => {
+    setActiveModal({ kind: "rename-project-group", group });
+  }, []);
+
+  const handleRenameWorkspaceGroup = useCallback((group: SidebarWorkspaceGroup) => {
+    setActiveModal({ kind: "rename-workspace-group", group });
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Row rendering
+  // ---------------------------------------------------------------------------
+
+  const renderWorkspaceRow = useCallback(
+    (
+      workspace: SidebarWorkspacePlacement,
+      input: {
+        drag: () => void;
+        isDragging: boolean;
+        dragHandleProps?: DraggableListDragHandleProps;
+        availableGroups?: SidebarGroupRef[];
+        currentGroupId?: string | null;
+        // Pinned rows come from every project at once, so each one says where it is from.
+        leading?: boolean;
+      },
+    ) => (
+      <MemoWorkspaceRowItem
+        workspace={workspace}
+        workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
+        hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
+        leadingProjectName={input.leading ? workspace.projectName : undefined}
+        leadingProjectIconDataUri={
+          input.leading
+            ? (projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null)
+            : undefined
+        }
+        shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
+        showShortcutBadge={showShortcutBadges}
+        canCopyBranchName={workspace.projectKind === "git"}
+        canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+        canGroup={Boolean(input.availableGroups) && isLayoutAvailable}
+        availableGroups={input.availableGroups}
+        currentGroupId={input.currentGroupId ?? null}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
+        selectionEnabled={selectionEnabled}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        onWorkspacePress={onWorkspacePress}
+        drag={input.drag}
+        isDragging={input.isDragging}
+        dragHandleProps={input.dragHandleProps}
+      />
+    ),
+    [
+      workspaceEntriesByKey,
+      hostBadgeByServerId,
+      projectIconByProjectViewKey,
+      shortcutIndexByWorkspaceKey,
+      showShortcutBadges,
+      supportsPinningByServerId,
+      isLayoutAvailable,
+      onToggleWorkspacePin,
+      creatingWorkspaceIds,
+      selectionEnabled,
+      activeWorkspaceSelection,
+      onWorkspacePress,
+    ],
+  );
+
+  // oxlint-disable-next-line complexity
+  const renderRowBody = useCallback(
+    (
+      row: SidebarFlatRow,
+      info: {
+        drag: () => void;
+        isDragging: boolean;
+        dragHandleProps?: DraggableListDragHandleProps;
+      },
+    ) => {
+      switch (row.kind) {
+        // The section testID rides the header, which is the only row the Pinned section
+        // always has. There is no section view left to hang it on.
+        case "pinned-header":
+          return (
+            <View testID="sidebar-pinned-section">
+              <PinnedSectionHeader collapsed={row.collapsed} onToggle={togglePinnedCollapsed} />
+            </View>
+          );
+
+        case "pinned-workspace":
+          return renderWorkspaceRow(row.workspace, { ...info, leading: true });
+
+        case "workspaces-header":
+          return listHeaderComponent ?? null;
+
+        case "project-group-header":
+          return (
+            <ProjectGroupHeaderFlatRow
+              row={row}
+              onToggleCollapsed={toggleGroupCollapsed}
+              onRename={handleRenameProjectGroup}
+              onDelete={handleDeleteProjectGroup}
+              drag={info.drag}
+              isDragging={info.isDragging}
+              dragHandleProps={info.dragHandleProps}
             />
-          </SidebarGroupDragContext>
-        </>
-      )}
-      {listFooterComponent}
-      {renamingGroup ? (
-        <AdaptiveRenameModal
-          visible
-          title={t("sidebar.workspaceGroup.renameGroupTitle")}
-          initialValue={renamingGroup.group.groupName}
-          placeholder={t("sidebar.workspaceGroup.newGroupPlaceholder")}
-          submitLabel={t("sidebar.group.save")}
-          onClose={handleCloseRenameGroup}
-          onSubmit={handleSubmitRenameGroup}
-          testID="sidebar-group-rename-modal"
-        />
-      ) : null}
-      {renamingProjectGroup ? (
-        <AdaptiveRenameModal
-          visible
-          title={t("sidebar.projectGroup.renameGroupTitle")}
-          initialValue={renamingProjectGroup.groupName}
-          placeholder={t("sidebar.projectGroup.newGroupPlaceholder")}
-          submitLabel={t("sidebar.group.save")}
-          onClose={handleCloseRenameProjectGroup}
-          onSubmit={handleSubmitRenameProjectGroup}
-          testID="sidebar-project-group-rename-modal"
-        />
-      ) : null}
-    </>
+          );
+
+        case "ungrouped-projects-header":
+          return (
+            <RemainderHeaderFlatRow
+              kind="project"
+              collapseKey={UNGROUPED_PROJECTS_COLLAPSE_KEY}
+              groupName={t("sidebar.projectGroup.noGroup")}
+              count={row.count}
+              collapsed={row.collapsed}
+              testID="sidebar-project-no-group"
+              onToggleCollapsed={toggleGroupCollapsed}
+            />
+          );
+
+        case "project-header":
+          return (
+            <ProjectHeaderFlatRow
+              row={row}
+              iconDataUri={projectIconByProjectViewKey.get(row.project.viewKey) ?? null}
+              isProjectActive={isProjectSelectedByRoute({
+                selection: activeWorkspaceSelection,
+                project: row.project,
+                enabled: selectionEnabled,
+              })}
+              isRemoving={removingProjectKeys.has(row.project.viewKey)}
+              canGroup={isLayoutAvailable}
+              availableProjectGroups={availableProjectGroups}
+              supportsMultiplicityByServerId={supportsMultiplicityByServerId}
+              onToggleCollapsed={onToggleProjectCollapsed}
+              onWorkspacePress={onWorkspacePress}
+              onWorktreeCreated={handleWorktreeCreated}
+              onNewWorkspaceGroup={handleOpenNewWorkspaceGroup}
+              onSetProjectGroup={handleSetProjectGroup}
+              onNewProjectGroup={handleOpenNewProjectGroup}
+              onRemoveProject={handleRemoveProject}
+              drag={info.drag}
+              isDragging={info.isDragging}
+              dragHandleProps={info.dragHandleProps}
+            />
+          );
+
+        case "workspace-group-header":
+          return (
+            <WorkspaceGroupHeaderFlatRow
+              row={row}
+              onToggleCollapsed={toggleGroupCollapsed}
+              onRename={handleRenameWorkspaceGroup}
+              onDelete={handleDeleteWorkspaceGroup}
+              drag={info.drag}
+              isDragging={info.isDragging}
+              dragHandleProps={info.dragHandleProps}
+            />
+          );
+
+        case "workspace-remainder-header":
+          return (
+            <RemainderHeaderFlatRow
+              kind="workspace"
+              collapseKey={workspaceRemainderCollapseKey(row.projectKey)}
+              groupName={t("sidebar.workspaceGroup.noGroup")}
+              count={row.count}
+              collapsed={row.collapsed}
+              indented
+              testID={`sidebar-workspace-no-group-${row.projectKey}`}
+              onToggleCollapsed={toggleGroupCollapsed}
+            />
+          );
+
+        case "workspace":
+          return renderWorkspaceRow(row.workspace, {
+            ...info,
+            availableGroups: workspaceGroupRefsByProject.get(row.projectKey) ?? EMPTY_GROUP_REFS,
+            currentGroupId: row.groupId,
+          });
+
+        case "show-more":
+          return <ShowMoreFlatRow row={row} onToggleSection={toggleSection} />;
+
+        case "new-workspace-ghost":
+          return (
+            <NewWorkspaceGhostRow
+              project={row.project}
+              displayName={row.project.projectName}
+              worktreeTarget={row.worktreeTarget}
+              onWorkspacePress={onWorkspacePress}
+            />
+          );
+
+        case "empty-state":
+          return (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyTitle} testID="sidebar-project-empty-state">
+                {t("sidebar.project.empty.title")}
+              </Text>
+              <Text style={styles.emptyText}>{t("sidebar.project.empty.description")}</Text>
+              <Button variant="ghost" size="sm" leftIcon={Plus} onPress={onAddProject}>
+                {t("sidebar.actions.addProject")}
+              </Button>
+            </View>
+          );
+      }
+    },
+    [
+      t,
+      listHeaderComponent,
+      togglePinnedCollapsed,
+      toggleGroupCollapsed,
+      toggleSection,
+      renderWorkspaceRow,
+      workspaceGroupRefsByProject,
+      projectIconByProjectViewKey,
+      activeWorkspaceSelection,
+      selectionEnabled,
+      removingProjectKeys,
+      isLayoutAvailable,
+      availableProjectGroups,
+      supportsMultiplicityByServerId,
+      onToggleProjectCollapsed,
+      onWorkspacePress,
+      handleWorktreeCreated,
+      handleOpenNewWorkspaceGroup,
+      handleOpenNewProjectGroup,
+      handleSetProjectGroup,
+      handleRemoveProject,
+      handleRenameProjectGroup,
+      handleDeleteProjectGroup,
+      handleRenameWorkspaceGroup,
+      handleDeleteWorkspaceGroup,
+      onAddProject,
+    ],
+  );
+
+  const renderRow = useCallback(
+    ({ item, drag, isActive, dragHandleProps }: DraggableRenderItemInfo<SidebarFlatRow>) => {
+      const startDrag =
+        COLLAPSE_ON_LIFT_NATIVE && platformIsNative ? () => armDrag(item, drag) : drag;
+      return (
+        <SidebarRowRail levels={item.railLevels} trailingGap={item.trailingGap}>
+          {renderRowBody(item, { drag: startDrag, isDragging: isActive, dragHandleProps })}
+        </SidebarRowRail>
+      );
+    },
+    [renderRowBody, armDrag],
   );
 
   return (
     <View style={styles.container}>
-      {platformIsNative ? (
-        <NestableScrollContainer
-          {...nativeScrollGestureProps}
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          testID="sidebar-project-workspace-list-scroll"
-        >
-          {content}
-        </NestableScrollContainer>
-      ) : (
-        <ScrollView
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          testID="sidebar-project-workspace-list-scroll"
-        >
-          {content}
-        </ScrollView>
-      )}
+      <DraggableList
+        testID="sidebar-project-workspace-list-scroll"
+        data={listData}
+        keyExtractor={flatRowKeyExtractor}
+        renderItem={renderRow}
+        onDragEnd={handleDrop}
+        onDragTerminate={endDrag}
+        canDrag={canDragRow}
+        getValidSlots={getValidSlotsForDrag}
+        getDragSnapshot={platformIsWeb ? handleDragSnapshot : undefined}
+        extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+        initialNumToRender={INITIAL_ROWS_TO_RENDER}
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        useDragHandle
+        simultaneousGestureRef={parentGestureRef}
+        gestureHostPresented={dragGestureHostPresented}
+        ListFooterComponent={listFooterComponent ?? null}
+      />
+      {activeModal ? (
+        <AdaptiveRenameModal
+          visible
+          title={t(MODAL_TITLE_KEYS[activeModal.kind])}
+          initialValue={
+            activeModal.kind === "rename-workspace-group" ||
+            activeModal.kind === "rename-project-group"
+              ? activeModal.group.groupName
+              : ""
+          }
+          placeholder={t(MODAL_PLACEHOLDER_KEYS[activeModal.kind])}
+          submitLabel={t(
+            activeModal.kind === "rename-workspace-group" ||
+              activeModal.kind === "rename-project-group"
+              ? "sidebar.group.save"
+              : "sidebar.group.create",
+          )}
+          onClose={closeModal}
+          onSubmit={handleSubmitModal}
+          testID={modalTestID(activeModal)}
+        />
+      ) : null}
     </View>
   );
 }

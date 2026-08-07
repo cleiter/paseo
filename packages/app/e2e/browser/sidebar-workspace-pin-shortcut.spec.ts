@@ -153,10 +153,12 @@ test.describe("Pin workspace shortcut", () => {
       await page.keyboard.press(PIN_SHORTCUT);
 
       await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
+      // Project mode draws the sidebar as one flat list, so a pinned row is a SIBLING of
+      // the Pinned header rather than a descendant of a section view. The row is still
+      // unambiguous: pinning lifts the workspace out of its project, and the project is
+      // collapsed anyway.
       await expect(
-        pinnedSection(page).getByTestId(
-          `sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`,
-        ),
+        page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`),
       ).toBeVisible();
     } finally {
       await workspace.cleanup();
