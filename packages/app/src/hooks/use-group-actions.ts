@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { useSidebarLayout } from "@/hooks/use-sidebar-layout";
 import type { SidebarLayout } from "@getpaseo/protocol/messages";
+import { applyDropIntent } from "@/sidebar/sidebar-flat-drop-apply";
+import type { SidebarDropIntent } from "@/sidebar/sidebar-flat-drop-policy";
 import {
   adoptVisibleProjectKeys,
   adoptVisibleWorkspaceKeys,
@@ -114,6 +116,11 @@ export interface GroupActions {
     orderedVisibleKeys: string[];
   }) => void;
 
+  // Every drop in the sidebar, as one action: the drag hands over what it meant and this
+  // decides what the document says. Writes nothing when the drop no longer means anything
+  // the document can honour — see applyDropIntent.
+  applyDropIntent: (intent: SidebarDropIntent) => void;
+
   // The Pinned section's order — its own, separate from the order those same workspaces
   // have inside their groups. Takes what is on SCREEN; the edit merges it into the stored
   // order so pins from a host that is currently offline keep their slots.
@@ -159,7 +166,7 @@ function withAdoptedWorkspaces(
 }
 
 export function useGroupActions(): GroupActions {
-  const { isAvailable, edit, preview, cancelPreview } = useSidebarLayout();
+  const { layout: currentLayout, isAvailable, edit, preview, cancelPreview } = useSidebarLayout();
 
   return useMemo<GroupActions>(
     () => ({
@@ -258,8 +265,19 @@ export function useGroupActions(): GroupActions {
       setPinnedWorkspaceOrder: (orderedVisibleKeys) => {
         edit((layout) => setPinnedWorkspaceOrder(layout, { orderedVisibleKeys }));
       },
+      applyDropIntent: (intent) => {
+        // Asked twice on purpose. This one decides whether to write AT ALL, because `edit`
+        // publishes a new revision to every host whether or not the recipe changed
+        // anything — and a drag that ends where it started must not do that. The one
+        // inside the recipe is the write, applied to whichever document the edit queue
+        // hands it.
+        if (!isAvailable || applyDropIntent(currentLayout, intent) === null) {
+          return;
+        }
+        edit((current) => applyDropIntent(current, intent) ?? current);
+      },
       cancelMovePreview: cancelPreview,
     }),
-    [isAvailable, edit, preview, cancelPreview],
+    [isAvailable, currentLayout, edit, preview, cancelPreview],
   );
 }
