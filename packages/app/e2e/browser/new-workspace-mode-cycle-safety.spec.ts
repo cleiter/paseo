@@ -1,4 +1,9 @@
 import { expect, test, type Page } from "../support/fixtures";
+import { openCommandCenter } from "../support/helpers/command-center";
+import {
+  chooseCommandCenterAgentControl,
+  expectCommandCenterAgentControlRowCount,
+} from "../support/helpers/command-center-agent-controls";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import {
@@ -138,6 +143,64 @@ test.describe("New Workspace mode cycle safety", () => {
       // fetchAgents is a real daemon round-trip; once it resolves, any mode change the
       // presses would have triggered has already landed. Assert the running agent is
       // untouched — both its committed mode and on the wire — with no fixed sleep.
+      const agents = await seeded.client.fetchAgents();
+      const backgroundAgent = agents.entries.find((entry) => entry.agent.id === agent.id)?.agent;
+      expect(backgroundAgent?.currentModeId).toBe("auto");
+      expect(modeRequests.requestsForAgent(agent.id)).toEqual([]);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  // Same hazard, different trigger: the New Workspace composer now registers Command Center
+  // agent-control rows. Picking a mode there must stay in the draft's form state and never reach
+  // the backgrounded agent that shares the provider — and therefore shares the mode's label.
+  test("Command Center mode in New Workspace never changes a backgrounded agent's mode", async ({
+    page,
+  }) => {
+    const serverId = getServerId();
+    const seeded = await seedWorkspace({ repoPrefix: "mode-command-center-safety-" });
+    await seedCodexDefaultPreferences(page, serverId);
+    // Routing must be installed before the page opens its daemon socket.
+    const modeRequests = await recordSetAgentModeRequests(page);
+
+    try {
+      const agent = await seeded.client.createAgent({
+        provider: "codex",
+        cwd: seeded.repoPath,
+        workspaceId: seeded.workspaceId,
+        title: "mode command center safety e2e",
+        modeId: "auto",
+        model: "gpt-5.4-mini",
+      });
+
+      await openAgentRoute(page, { workspaceId: seeded.workspaceId, agentId: agent.id });
+      await expect(
+        page.getByRole("button", { name: "Select agent mode (Default permissions)" }),
+      ).toBeVisible({ timeout: 30_000 });
+
+      await openGlobalNewWorkspaceComposer(page);
+      await selectNewWorkspaceProject(page, {
+        projectKey: seeded.projectKey,
+        projectDisplayName: seeded.projectDisplayName,
+      });
+
+      // Both composers are codex, so an extra registrant would duplicate this exact row. Checking
+      // the count is what separates "the live agent ignored the pick" from "the live agent was
+      // never registered" — the assertion below cannot tell those apart on its own.
+      await openCommandCenter(page);
+      await expectCommandCenterAgentControlRowCount({
+        page,
+        query: "auto-review",
+        choice: "Mode › Auto-review",
+        count: 1,
+      });
+      await chooseCommandCenterAgentControl({
+        page,
+        query: "auto-review",
+        choice: "Mode › Auto-review",
+      });
+
       const agents = await seeded.client.fetchAgents();
       const backgroundAgent = agents.entries.find((entry) => entry.agent.id === agent.id)?.agent;
       expect(backgroundAgent?.currentModeId).toBe("auto");
