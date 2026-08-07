@@ -74,13 +74,6 @@ export interface GroupActions {
     visibleKeys?: readonly string[];
   }) => void;
   reorderProjectGroups: (orderedIds: string[]) => void;
-  previewProjectMove: (input: {
-    projectKey: string;
-    groupId: string | null;
-    beforeKey?: string | null;
-    after: boolean;
-    visibleKeys?: readonly string[];
-  }) => void;
   // A drag hands back the rows it reordered — only the VISIBLE ones, since a long list is
   // capped behind "show more". The edit merges them into the group's stored order, so the
   // rows below the cap keep their place instead of being written out of the group.
@@ -98,18 +91,6 @@ export interface GroupActions {
     visibleKeys?: readonly string[];
   }) => void;
   reorderWorkspaceGroups: (input: { projectKey: string; orderedIds: string[] }) => void;
-  // Shows the move without saving it, so the target group's list opens a gap under the
-  // cursor. Committed by the drop, discarded if the drag is abandoned.
-  previewWorkspaceMove: (input: {
-    projectKey: string;
-    workspaceKey: string;
-    groupId: string | null;
-    beforeKey?: string | null;
-    after: boolean;
-    visibleKeys?: readonly string[];
-  }) => void;
-  // One cancel for both levels: only one drag can be in flight.
-  cancelMovePreview: () => void;
   reorderWorkspacesInGroup: (input: {
     projectKey: string;
     groupId: string | null;
@@ -166,7 +147,7 @@ function withAdoptedWorkspaces(
 }
 
 export function useGroupActions(): GroupActions {
-  const { layout: currentLayout, isAvailable, edit, preview, cancelPreview } = useSidebarLayout();
+  const { layout: currentLayout, isAvailable, edit } = useSidebarLayout();
 
   return useMemo<GroupActions>(
     () => ({
@@ -235,9 +216,6 @@ export function useGroupActions(): GroupActions {
       reorderProjectsInGroup: (input) => {
         edit((layout) => reorderProjectsInGroup(layout, input));
       },
-      previewProjectMove: (input) => {
-        preview((layout) => moveProjectToGroup(withAdoptedProjects(layout, input), input));
-      },
 
       createWorkspaceGroup: ({ projectKey, name }) => {
         const id = createGroupId();
@@ -259,9 +237,6 @@ export function useGroupActions(): GroupActions {
       reorderWorkspacesInGroup: (input) => {
         edit((layout) => reorderWorkspacesInGroup(layout, input));
       },
-      previewWorkspaceMove: (input) => {
-        preview((layout) => moveWorkspaceToGroup(withAdoptedWorkspaces(layout, input), input));
-      },
       setPinnedWorkspaceOrder: (orderedVisibleKeys) => {
         edit((layout) => setPinnedWorkspaceOrder(layout, { orderedVisibleKeys }));
       },
@@ -276,8 +251,7 @@ export function useGroupActions(): GroupActions {
         }
         edit((current) => applyDropIntent(current, intent) ?? current);
       },
-      cancelMovePreview: cancelPreview,
     }),
-    [isAvailable, currentLayout, edit, preview, cancelPreview],
+    [isAvailable, currentLayout, edit],
   );
 }

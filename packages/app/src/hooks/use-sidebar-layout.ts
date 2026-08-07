@@ -37,12 +37,6 @@ export interface SidebarLayoutController {
   // would silently fail to persist.
   isAvailable: boolean;
   edit: (recipe: (layout: SidebarLayout) => SidebarLayout) => void;
-  // A preview is an edit that is NOT committed: it shows in the sidebar and goes no
-  // further. Dragging a row across groups uses it, so the target group's list really
-  // contains the row while the cursor is over it — which is what lets dnd-kit's sorting
-  // strategy open a gap for it. A strategy can only shift rows it knows about.
-  preview: (recipe: (layout: SidebarLayout) => SidebarLayout) => void;
-  cancelPreview: () => void;
 }
 
 function readHostLayouts(
@@ -57,18 +51,17 @@ function readHostLayouts(
 
 // Applies the recipe ONCE, to a base of the caller's choosing.
 //
-// `includePreview` decides whether the uncommitted drag preview counts as part of that
-// base. A first attempt says yes — the drop must land where the gap opened, so it builds
-// on the preview and is a reorder within a group the row already sits in. A RETRY says no:
-// the preview is stale by then, and re-applying on top of it would apply the recipe to its
-// own result.
+// `includePending` decides whether the optimistic layout of an edit that is still on the
+// wire counts as part of that base. A first attempt says yes, so a second edit queued
+// behind the first builds on its result. A RETRY says no: by then the pending layout is
+// stale, and re-applying on top of it would apply the recipe to its own result.
 function applyEdit(input: {
   entries: readonly HostLayoutEntry[];
   recipe: (layout: SidebarLayout) => SidebarLayout;
-  includePreview: boolean;
+  includePending: boolean;
 }): SidebarLayout {
   const winner = pickWinningLayout(input.entries);
-  const base = input.includePreview
+  const base = input.includePending
     ? resolvePendingLayout(winner, getPendingSidebarLayout())
     : winner;
   // The first write to an empty document carries the user's existing per-device drag
@@ -78,7 +71,7 @@ function applyEdit(input: {
     base.revision === 0 ? seedLayoutFromLocalOrder(base, useSidebarOrderStore.getState()) : base;
   return {
     ...input.recipe(seeded),
-    // Must clear the HOSTS, not just the base: a preview already sits one ahead of them.
+    // Must clear the HOSTS, not just the base: a pending layout already sits one ahead.
     revision: Math.max(seeded.revision, winner.revision) + 1,
     updatedAt: new Date().toISOString(),
   };
@@ -91,7 +84,7 @@ function applyEdit(input: {
 // It takes the ALREADY-COMPUTED layout. The recipe has run; running it again here would
 // apply it to its own result — which is invisible for a rename or a move (they are
 // idempotent) and duplicates the group for a create. It is only re-run to REBUILD after a
-// conflict, and then against the authoritative document rather than the stale preview.
+// conflict, and then against the authoritative document rather than the stale pending one.
 async function commitLayout(input: {
   queryClient: QueryClient;
   serverIds: readonly string[];
@@ -147,11 +140,11 @@ async function commitLayout(input: {
     }
     // Someone else's write landed first. The cache now holds their document, so rebuild
     // this edit on top of theirs instead of clobbering it — and on the AUTHORITATIVE
-    // document, not the preview, which is stale the moment a conflict is known.
+    // document, not the pending one, which is stale the moment a conflict is known.
     next = applyEdit({
       entries: readHostLayouts(input.queryClient, input.serverIds),
       recipe: input.recipe,
-      includePreview: false,
+      includePending: false,
     });
   }
 }
@@ -277,7 +270,7 @@ export function useSidebarLayout(): SidebarLayoutController {
       const next = applyEdit({
         entries: readHostLayouts(queryClient, activeServerIds),
         recipe,
-        includePreview: true,
+        includePending: true,
       });
       const ownedToken = setPendingSidebarLayout(next);
 
@@ -307,34 +300,9 @@ export function useSidebarLayout(): SidebarLayoutController {
     [activeServerIds, queryClient],
   );
 
-  const preview = useCallback(
-    (recipe: (layout: SidebarLayout) => SidebarLayout) => {
-      if (activeServerIds.length === 0) {
-        return;
-      }
-      const hostLayouts = readHostLayouts(queryClient, activeServerIds);
-      const confirmedNow = pickWinningLayout(hostLayouts);
-      const displayed = resolvePendingLayout(confirmedNow, getPendingSidebarLayout());
-      setPendingSidebarLayout({
-        ...recipe(displayed),
-        // Pinned one ahead of the hosts rather than incremented per move: a drag fires
-        // dragOver many times, and each one would otherwise inflate the revision.
-        revision: confirmedNow.revision + 1,
-        updatedAt: new Date().toISOString(),
-      });
-    },
-    [activeServerIds, queryClient],
-  );
-
-  const cancelPreview = useCallback(() => {
-    setPendingSidebarLayout(null);
-  }, []);
-
   return {
     layout,
     isAvailable: activeServerIds.length > 0,
     edit,
-    preview,
-    cancelPreview,
   };
 }

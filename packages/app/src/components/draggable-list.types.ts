@@ -52,8 +52,6 @@ export interface DraggableListProps<T> {
   useDragHandle?: boolean;
   refreshing?: boolean;
   onRefresh?: () => void;
-  /** Fill remaining space when content is smaller than container */
-  contentContainerFlexGrow?: boolean;
   /** External row state that should invalidate virtualized native cells. */
   extraData?: unknown;
   /** Native-only: rows to render before the first measure. Web renders every row. */
@@ -69,8 +67,8 @@ export interface DraggableListProps<T> {
   /**
    * Called when a drag ends WITHOUT a drop — cancelled, interrupted, or unmounted.
    * Together with `onDragEnd` this is the complete set of drag-state cleanup triggers.
-   * `onDragRelease` is not one of them: on native it fires before the settle spring, so
-   * cleaning up there tears down the drag while it is still animating into place.
+   * The native list's `onRelease` is not one of them: it fires before the settle spring,
+   * so cleaning up there tears the drag down while it is still animating into place.
    */
   onDragTerminate?: () => void;
   /**
@@ -102,29 +100,4 @@ export interface DraggableListProps<T> {
    * changes: the owner has to reshape the rows BEFORE calling `drag()` instead.
    */
   getDragSnapshot?: (data: T[], from: number) => T[];
-  /** Called immediately before invoking row `drag()` to lock outer owners. */
-  onDragIntent?: () => void;
-  /** Called when drag interaction ends (finger released). */
-  onDragRelease?: () => void;
-  /**
-   * Native-only: use the nestable draggable-flatlist variant for nested drag
-   * lists coordinated by a shared NestableScrollContainer.
-   */
-  nestable?: boolean;
-  /**
-   * WEB ONLY. When true the list does NOT mount its own DndContext and instead
-   * renders a bare SortableContext, expecting an ancestor to own the drag. This is
-   * what lets one drag span several lists (e.g. moving a workspace between groups);
-   * a per-list DndContext can't do that, because dnd-kit cannot drag across contexts.
-   * The ancestor then owns `activeId` and the drag handlers. Native ignores it.
-   */
-  externalDndContext?: boolean;
-  /**
-   * WEB ONLY. Attaches a typed payload to each draggable so the ancestor's drag
-   * handler can tell which list an item came from and which it was dropped on.
-   * Without it `event.active.data` is empty and a cross-list drop is unreadable.
-   */
-  getItemData?: (item: T, index: number) => Record<string, unknown>;
-  /** WEB ONLY. The dragging item's id when an ancestor owns the DndContext. */
-  activeId?: string | null;
 }

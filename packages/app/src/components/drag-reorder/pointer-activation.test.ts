@@ -19,9 +19,9 @@ describe("getDragActivationConstraints", () => {
     expect(getDragActivationConstraints(false, config).touch).toEqual({ distance: 6 });
   });
 
-  // The shared default is what both sidebar DndContexts read — DraggableList's own and the
-  // hoisted one that spans a project's groups. When they held separate copies, one kept a
-  // mouse hold delay the other had dropped, and a mouse drag inside a group did nothing.
+  // A mouse drag inside a group once did nothing at all, because a second sidebar
+  // DndContext held its own copy of these numbers and kept a mouse hold delay after this
+  // one dropped it.
   it("never makes a mouse drag wait on a hold", () => {
     const constraints = getDragActivationConstraints(true, DEFAULT_DRAG_ACTIVATION_CONFIG);
 

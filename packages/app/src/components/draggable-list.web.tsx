@@ -48,24 +48,8 @@ interface SortableItemProps<T> {
   renderItem: (info: DraggableRenderItemInfo<T>) => ReactElement;
   activeId: string | null;
   useDragHandle: boolean;
-  itemData?: Record<string, unknown>;
-  externallyControlled: boolean;
   canDrag: boolean;
   canDrop: boolean;
-}
-
-// When an ancestor owns the drag, the new order arrives as DATA — the row is already in
-// its new place by the time dnd-kit would animate it there. Leaving the layout animation
-// on makes the two fight: dnd-kit measures the row's old rect, the data moves it, and the
-// row visibly flies in from where it used to be. A list that owns its own drag reorders
-// itself synchronously, so there is nothing to fight and the animation is worth keeping.
-const NO_LAYOUT_ANIMATION = () => false;
-
-function getDraggedOpacity(isDragging: boolean, externallyControlled: boolean): number {
-  if (!isDragging) {
-    return 1;
-  }
-  return externallyControlled ? 0.35 : 0.9;
 }
 
 function SortableItemInner<T>({
@@ -75,8 +59,6 @@ function SortableItemInner<T>({
   renderItem,
   activeId,
   useDragHandle,
-  itemData,
-  externallyControlled,
   canDrag,
   canDrop,
 }: SortableItemProps<T>) {
@@ -90,12 +72,10 @@ function SortableItemInner<T>({
     isDragging,
   } = useSortable({
     id,
-    data: itemData,
     // Granular on purpose. `disabled: true` turns off the drop target as well as the drag
     // source, and the rows you cannot pick up — section headers, the "show more" toggle —
     // are exactly the ones a drop needs to be able to land next to.
     disabled: { draggable: !canDrag, droppable: !canDrop },
-    ...(externallyControlled ? { animateLayoutChanges: NO_LAYOUT_ANIMATION } : {}),
   });
 
   const dragRef = useRef<(() => void) | null>(null);
@@ -129,21 +109,14 @@ function SortableItemInner<T>({
   // straight on top of it: two titles printed in one place.
   //
   // The placeholder slides to where the item will land. That is the point of it.
-  const draggedOpacity = getDraggedOpacity(isDragging, externallyControlled);
   const style = useMemo(
     () => ({
       transform: combinedTransform || undefined,
-      // No transition on the settle either: with the order arriving as data, a transition
-      // animates the row FROM the position it no longer occupies. And a placeholder has
-      // nothing to transition to.
-      transition: externallyControlled ? undefined : transition,
-      // An externally-driven list renders the dragged row in an overlay that follows the
-      // cursor, so the row left behind is a placeholder marking the gap — not a second
-      // copy of the same row sitting there at nearly full strength.
-      opacity: draggedOpacity,
+      transition,
+      opacity: isDragging ? 0.9 : 1,
       zIndex: isDragging ? 1000 : 1,
     }),
-    [combinedTransform, transition, isDragging, externallyControlled, draggedOpacity],
+    [combinedTransform, transition, isDragging],
   );
 
   const info: DraggableRenderItemInfo<T> = {
@@ -195,10 +168,6 @@ export function DraggableList<T>({
   canDrag,
   getValidSlots,
   getDragSnapshot,
-  nestable: _nestable = false,
-  externalDndContext = false,
-  getItemData,
-  activeId: externalActiveId = null,
 }: DraggableListProps<T>) {
   const internal = useDragReorderState({
     data,
@@ -212,11 +181,8 @@ export function DraggableList<T>({
     useDragHandle,
     DEFAULT_DRAG_ACTIVATION_CONFIG,
   );
-  // When an ancestor owns the drag, its handlers fire — not ours — so our internal
-  // reorder state would never update. Read the live data and the ancestor's activeId
-  // instead of the stale internal copy.
-  const items = externalDndContext ? data : internal.items;
-  const activeId = externalDndContext ? externalActiveId : internal.activeId;
+  const items = internal.items;
+  const activeId = internal.activeId;
   const handlers = internal.handlers;
 
   const sensors = useSensors(
@@ -267,8 +233,6 @@ export function DraggableList<T>({
             renderItem={renderItem}
             activeId={activeId}
             useDragHandle={useDragHandle}
-            itemData={getItemData?.(item, index)}
-            externallyControlled={externalDndContext}
             canDrag={canDrag ? canDrag(item, index) : true}
             canDrop={validSlots ? validSlots.has(index) : true}
           />
@@ -277,11 +241,7 @@ export function DraggableList<T>({
     </SortableContext>
   );
 
-  // An ancestor already owns the DndContext, so mounting another here would trap the
-  // drag inside this one list and make a cross-list drop impossible.
-  const sortableBody = externalDndContext ? (
-    sortableItems
-  ) : (
+  const sortableBody = (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}

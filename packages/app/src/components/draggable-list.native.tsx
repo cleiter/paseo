@@ -1,9 +1,6 @@
 import { RefreshControl } from "react-native";
 import { useCallback, useMemo, useState } from "react";
-import DraggableFlatList, {
-  NestableDraggableFlatList,
-  type RenderItemParams,
-} from "react-native-draggable-flatlist";
+import DraggableFlatList, { type RenderItemParams } from "react-native-draggable-flatlist";
 import { useSharedValue } from "react-native-reanimated";
 import { useUnistyles } from "react-native-unistyles";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
@@ -43,7 +40,6 @@ export function DraggableList<T>({
   // Web-only: native reshapes its rows before calling drag() instead, because this list
   // cancels any drag whose data changes underneath it.
   getDragSnapshot: _getDragSnapshot,
-  nestable = false,
 }: DraggableListProps<T>) {
   const { theme } = useUnistyles();
   const [isDragging, setIsDragging] = useState(false);
@@ -51,8 +47,6 @@ export function DraggableList<T>({
   // than a prop the JS thread owns.
   const validSlots = useSharedValue<number[]>([]);
 
-  // Pass the ref directly to DraggableFlatList - it handles gesture
-  // coordination internally for nestable lists.
   const simultaneousHandlers = useMemo(
     () => (simultaneousGestureRef ? [simultaneousGestureRef] : undefined),
     [simultaneousGestureRef],
@@ -113,14 +107,10 @@ export function DraggableList<T>({
   const showRefreshControl = Boolean(onRefresh) && (!isDragging || Boolean(refreshing));
   const resolvedContainerStyle =
     containerStyle ?? (scrollEnabled ? SCROLL_ENABLED_FLEX_STYLE : undefined);
-  const shouldShowRefreshControl = showRefreshControl && !nestable;
-  const ListComponent: typeof DraggableFlatList = (
-    nestable ? (NestableDraggableFlatList as unknown) : DraggableFlatList
-  ) as typeof DraggableFlatList;
 
   const refreshControl = useMemo(
     () =>
-      shouldShowRefreshControl ? (
+      showRefreshControl ? (
         <RefreshControl
           refreshing={refreshing ?? false}
           onRefresh={onRefresh}
@@ -128,11 +118,11 @@ export function DraggableList<T>({
           colors={refreshColors}
         />
       ) : undefined,
-    [shouldShowRefreshControl, refreshing, onRefresh, theme.colors.foregroundMuted, refreshColors],
+    [showRefreshControl, refreshing, onRefresh, theme.colors.foregroundMuted, refreshColors],
   );
 
   return (
-    <ListComponent
+    <DraggableFlatList
       testID={testID}
       data={data}
       keyExtractor={keyExtractor}
@@ -150,8 +140,8 @@ export function DraggableList<T>({
       initialNumToRender={initialNumToRender}
       simultaneousHandlers={simultaneousHandlers}
       dragGestureHostPresented={gestureHostPresented}
-      // Higher activation distance reduces accidental drag capture while nested
-      // lists are inside a scroll container.
+      // The list is its own scroll container, so a lift has to be told apart from a
+      // flick. Requiring travel before the drag takes over is what does that.
       activationDistance={20}
       onDragBegin={handleDragBegin}
       onDragTerminate={handleDragTerminate}

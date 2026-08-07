@@ -13,11 +13,10 @@ export interface DragActivationConstraints {
   touch: PointerActivationConstraint;
 }
 
-// Exported rather than left where it is used, because there are now two DndContexts in the
-// sidebar — DraggableList's own, and the hoisted one that spans a project's groups — and a
-// row has to start dragging the same way in both. Two copies of these numbers is how they
-// last drifted apart: the hoisted context kept a mouse hold delay for months after
-// DraggableList dropped it, so a mouse drag inside a group did nothing at all.
+// Exported rather than left where it is used. The sidebar once ran a second DndContext
+// alongside DraggableList's own, each with its own copy of these numbers, and they drifted:
+// one kept a mouse hold delay the other had dropped, so a mouse drag inside a group did
+// nothing at all. One definition is what stops that happening again.
 export const DEFAULT_DRAG_ACTIVATION_CONFIG: DragActivationConfig = {
   movementDistance: 6,
   touchHoldDelayMs: 180,
