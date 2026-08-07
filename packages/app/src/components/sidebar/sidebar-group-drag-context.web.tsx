@@ -40,6 +40,57 @@ import {
 const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 const DND_MODIFIERS = [restrictToVerticalAxis];
 
+// dnd-kit publishes its own bookkeeping alongside our payload on every sortable: which
+// SortableContext the node belongs to, and its index in it.
+interface SortablePosition {
+  containerId: string;
+  index: number;
+}
+
+function readSortable(data: unknown): SortablePosition | null {
+  const sortable = (data as { sortable?: Partial<SortablePosition> } | undefined)?.sortable;
+  return typeof sortable?.containerId === "string" && typeof sortable.index === "number"
+    ? { containerId: sortable.containerId, index: sortable.index }
+    : null;
+}
+
+// Which side of the hovered row the dragged row has reached, from the two rectangles.
+// Rectangles rather than the raw pointer because a pointer inside a tall row says nothing
+// about which way it came from.
+function isPastCentre(event: DragOverEvent | DragEndEvent): boolean {
+  const active = event.active.rect.current.translated;
+  const over = event.over?.rect;
+  if (!active || !over) {
+    return false;
+  }
+  return active.top + active.height / 2 > over.top + over.height / 2;
+}
+
+// Which side of the hovered row the dragged one lands on. Two sources, and which is right
+// depends on who is drawing the sort.
+//
+// While the row is still where the drag found it, dnd-kit owns the arrangement and is
+// painting it: a row travelling toward a HIGHER index in the same SortableContext is
+// passing below its target. Its indices beat anything measured, because measuring means
+// reading rectangles the sorting strategy is at that moment animating.
+//
+// Once a PREVIEW has carried the row into another group, those indices become circular —
+// they describe a list this drag itself rewrote, so re-deriving a position from them and
+// writing it back swaps the two rows and then swaps them again, and the preview flickers
+// under a hand that is barely moving. From then on only the rectangles are independent of
+// what we already decided.
+function decideAfter(event: DragOverEvent | DragEndEvent, previewed: boolean): boolean {
+  if (previewed) {
+    return isPastCentre(event);
+  }
+  const active = readSortable(event.active.data.current);
+  const over = readSortable(event.over?.data.current);
+  if (active && over && active.containerId === over.containerId) {
+    return active.index < over.index;
+  }
+  return isPastCentre(event);
+}
+
 // Droppables are measured on every move, not once at drag start. The ungrouped
 // remainder's label only appears WHILE a row is in flight, and a droppable that shows up
 // after the drag began would never be measured under the default strategy — so it would
@@ -160,9 +211,17 @@ export function SidebarGroupDragContext({
   // So: only a POINTER MOVEMENT may change the preview. A re-layout may not.
   const previewDeltaRef = useRef<{ x: number; y: number } | null>(null);
 
+  // The group the row was in when the drag began. A preview rewrites the row's own data to
+  // say it lives in the target group, so without this the policy cannot tell "has not moved
+  // yet" from "already carried in" — and every hover after the first crossing reads as an
+  // ordinary same-group drag and is ignored. That is what froze the row at the position of
+  // its first crossing.
+  const originGroupRef = useRef<string | null>(null);
+
   const handleDragStart = useCallback((event: DragStartEvent) => {
     previewedRef.current = false;
     previewDeltaRef.current = null;
+    originGroupRef.current = asRow(readDragData(event.active.data.current))?.groupId ?? null;
     setActiveId(String(event.active.id));
     const row = asRow(readDragData(event.active.data.current));
     setActiveItemKey(row?.itemKey ?? null);
@@ -192,6 +251,8 @@ export function SidebarGroupDragContext({
       const action = decideDragOver({
         active: readDragData(event.active.data.current),
         over: readDragData(event.over?.data.current),
+        after: decideAfter(event, previewedRef.current),
+        originGroupId: originGroupRef.current,
       });
       if (action.kind === "preview") {
         previewedRef.current = true;
@@ -212,6 +273,7 @@ export function SidebarGroupDragContext({
         over: readDragData(event.over?.data.current),
         hasPreview: previewedRef.current,
         groupIds,
+        after: decideAfter(event, previewedRef.current),
       });
 
       switch (action.kind) {

@@ -86,9 +86,10 @@ describe("sidebar layout edits", () => {
   });
 
   it("reorders a row DOWNWARD, not just upward", () => {
-    // The bug this exists for: a drop names the row it landed on, and inserting "before"
-    // that row makes a downward drag a no-op. Drag w1 onto w2, insert before w2, and you
-    // get [w1, w2] straight back — the row visibly snaps home and nothing is saved.
+    // The bug this exists for: a drop names the row it landed on, and treating that as
+    // "insert before" makes a downward drag a no-op. Drag w1 onto w2, insert before w2,
+    // and you get [w1, w2] straight back — the row snaps home and nothing is saved. The
+    // side is measured from the rows, so a downward drag says so.
     const before = layout({
       workspaceGroups: [
         { id: "wg1", name: "In review", projectKey: "p1", workspaceKeys: ["w1", "w2"] },
@@ -100,6 +101,7 @@ describe("sidebar layout edits", () => {
       workspaceKey: "w1",
       groupId: "wg1",
       beforeKey: "w2",
+      after: true,
     });
     expect(down.workspaceGroups[0]?.workspaceKeys).toEqual(["w2", "w1"]);
 
@@ -121,6 +123,7 @@ describe("sidebar layout edits", () => {
       workspaceKey: "w1",
       groupId: null,
       beforeKey: "w3",
+      after: true,
     });
 
     expect(next.ungroupedWorkspaceKeysByProject.p1).toEqual(["w2", "w3", "w1"]);
@@ -674,8 +677,118 @@ describe("adopting rows the document has never seen", () => {
       projectKey: "first",
       groupId: null,
       beforeKey: "second",
+      after: true,
     });
 
     expect(next.ungroupedProjectKeys).toEqual(["written-long-ago", "second", "first"]);
+  });
+
+  // Reported from dogfooding: a row dragged in from ANOTHER group could not be put below
+  // the row it landed on. Only above — you had to drop it, then drag it again.
+  //
+  // The preview carries the row into the target list before the drop, so by then dnd-kit
+  // is sorting both rows in one context and paints the dragged row BELOW the row under
+  // the cursor. The commit disagreed: the moved key was still filed under its old group,
+  // so adoption skipped it as "known, just not here", the drop fell through to the
+  // cross-list insert, and insert lands before. Screen said below, document said above.
+  it("puts a row dragged in from another group BELOW the row it lands on", () => {
+    const before = layout({
+      workspaceGroups: [
+        { id: "active", name: "Active Development", projectKey: "p", workspaceKeys: ["task"] },
+        { id: "review", name: "In Review", projectKey: "p", workspaceKeys: ["main"] },
+      ],
+    });
+
+    // What the sidebar draws once the preview has moved the row in.
+    const adopted = adoptVisibleWorkspaceKeys(before, {
+      projectKey: "p",
+      groupId: "active",
+      visibleKeys: ["main", "task"],
+      movingKey: "main",
+    });
+    const next = moveWorkspaceToGroup(adopted, {
+      projectKey: "p",
+      workspaceKey: "main",
+      groupId: "active",
+      beforeKey: "task",
+      after: true,
+    });
+
+    expect(next.workspaceGroups[0]?.workspaceKeys).toEqual(["task", "main"]);
+    // And it left the group it came from, rather than living in both.
+    expect(next.workspaceGroups[1]?.workspaceKeys).toEqual([]);
+  });
+
+  // The other half of the same gesture: released without moving past the row it displaced,
+  // the row stays where the preview put it. Both slots have to be reachable in one drag.
+  it("keeps a row dragged in from another group ABOVE when it is dropped on itself", () => {
+    const before = layout({
+      workspaceGroups: [
+        { id: "active", name: "Active Development", projectKey: "p", workspaceKeys: ["task"] },
+        { id: "review", name: "In Review", projectKey: "p", workspaceKeys: ["main"] },
+      ],
+    });
+
+    const adopted = adoptVisibleWorkspaceKeys(before, {
+      projectKey: "p",
+      groupId: "active",
+      visibleKeys: ["main", "task"],
+      movingKey: "main",
+    });
+    const next = moveWorkspaceToGroup(adopted, {
+      projectKey: "p",
+      workspaceKey: "main",
+      groupId: "active",
+      beforeKey: "main",
+    });
+
+    expect(next.workspaceGroups[0]?.workspaceKeys).toEqual(["main", "task"]);
+    expect(next.workspaceGroups[1]?.workspaceKeys).toEqual([]);
+  });
+
+  // Same bug, project level. The modules are shared; the fix has to be too.
+  it("puts a project dragged in from another group BELOW the row it lands on", () => {
+    const before = layout({
+      projectGroups: [
+        { id: "g1", name: "Work", projectKeys: ["a"] },
+        { id: "g2", name: "Personal", projectKeys: ["b"] },
+      ],
+    });
+
+    const adopted = adoptVisibleProjectKeys(before, {
+      groupId: "g1",
+      visibleKeys: ["b", "a"],
+      movingKey: "b",
+    });
+    const next = moveProjectToGroup(adopted, {
+      projectKey: "b",
+      groupId: "g1",
+      beforeKey: "a",
+      after: true,
+    });
+
+    expect(next.projectGroups[0]?.projectKeys).toEqual(["a", "b"]);
+    expect(next.projectGroups[1]?.projectKeys).toEqual([]);
+  });
+
+  // Adoption must not become a back door for moving rows. Only the key the drag is
+  // actually carrying is exempt from "known, just not here".
+  it("still refuses to adopt a row that belongs to another group", () => {
+    const before = layout({
+      workspaceGroups: [
+        { id: "g1", name: "Review", projectKey: "p", workspaceKeys: ["w1"] },
+        { id: "g2", name: "Done", projectKey: "p", workspaceKeys: ["w9"] },
+      ],
+    });
+
+    const next = adoptVisibleWorkspaceKeys(before, {
+      projectKey: "p",
+      groupId: "g1",
+      visibleKeys: ["w1", "w9"],
+      movingKey: "w1",
+    });
+
+    expect(next.workspaceGroups[0]?.workspaceKeys).toEqual(["w1"]);
+    expect(next.workspaceGroups[1]?.workspaceKeys).toEqual(["w9"]);
   });
 });

@@ -57,6 +57,18 @@ export interface SidebarGroupDropEvent {
   // when the row was dropped on a group HEADER rather than on another row — the header
   // names the group but no position within it, so the row goes to the end.
   overItemKey: string | null;
+  // Which SIDE of that row, decided by which way the dragged row is travelling past it.
+  //
+  // A position has to be expressed relative to a row that is not moving, or a preview
+  // cannot be applied twice. "Take index 1" reads a list the last preview already
+  // rewrote, so a second dragOver over the same row swaps the two rows straight back and
+  // the preview flickers between them under a hand that is barely moving. "After task" is
+  // the same answer however many times it is applied.
+  //
+  // It is also the only way to reach the slot below the last row of another group: an
+  // insert that is always "before" leaves that position unaddressable, so the row had to
+  // be dropped and dragged a second time to get there.
+  after: boolean;
 }
 
 export interface SidebarGroupDragContextProps {

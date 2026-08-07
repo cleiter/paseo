@@ -61,6 +61,11 @@ export interface GroupActions {
     projectKey: string;
     groupId: string | null;
     beforeKey?: string | null;
+    // Which side of `beforeKey` the row lands on. REQUIRED on all four of these, and not
+    // defaulted: a missing side reads as "above", so forgetting it does not fail — it
+    // silently makes one drag direction a no-op. That shipped, on the project handlers
+    // only, while the workspace ones next to them were correct.
+    after: boolean;
     // The target list AS DRAWN. A drop positions one row against another, which is index
     // arithmetic over the stored list — so the document has to know both rows first. See
     // adoptVisibleProjectKeys.
@@ -71,6 +76,7 @@ export interface GroupActions {
     projectKey: string;
     groupId: string | null;
     beforeKey?: string | null;
+    after: boolean;
     visibleKeys?: readonly string[];
   }) => void;
   // A drag hands back the rows it reordered — only the VISIBLE ones, since a long list is
@@ -86,6 +92,7 @@ export interface GroupActions {
     workspaceKey: string;
     groupId: string | null;
     beforeKey?: string | null;
+    after: boolean;
     visibleKeys?: readonly string[];
   }) => void;
   reorderWorkspaceGroups: (input: { projectKey: string; orderedIds: string[] }) => void;
@@ -96,6 +103,7 @@ export interface GroupActions {
     workspaceKey: string;
     groupId: string | null;
     beforeKey?: string | null;
+    after: boolean;
     visibleKeys?: readonly string[];
   }) => void;
   // One cancel for both levels: only one drag can be in flight.
@@ -118,7 +126,7 @@ export interface GroupActions {
 // the document unchanged.
 function withAdoptedProjects(
   layout: SidebarLayout,
-  input: { groupId: string | null; visibleKeys?: readonly string[] },
+  input: { projectKey: string; groupId: string | null; visibleKeys?: readonly string[] },
 ): SidebarLayout {
   if (!input.visibleKeys) {
     return layout;
@@ -126,12 +134,18 @@ function withAdoptedProjects(
   return adoptVisibleProjectKeys(layout, {
     groupId: input.groupId,
     visibleKeys: input.visibleKeys,
+    movingKey: input.projectKey,
   });
 }
 
 function withAdoptedWorkspaces(
   layout: SidebarLayout,
-  input: { projectKey: string; groupId: string | null; visibleKeys?: readonly string[] },
+  input: {
+    projectKey: string;
+    workspaceKey: string;
+    groupId: string | null;
+    visibleKeys?: readonly string[];
+  },
 ): SidebarLayout {
   if (!input.visibleKeys) {
     return layout;
@@ -140,6 +154,7 @@ function withAdoptedWorkspaces(
     projectKey: input.projectKey,
     groupId: input.groupId,
     visibleKeys: input.visibleKeys,
+    movingKey: input.workspaceKey,
   });
 }
 

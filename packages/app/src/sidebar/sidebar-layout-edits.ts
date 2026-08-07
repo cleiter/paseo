@@ -23,37 +23,36 @@ export function createGroupId(): string {
   return `grp_${crypto.randomUUID()}`;
 }
 
-// A drop names the row it landed ON, not a position. Turning that into a new list is two
-// different operations depending on whether the row is already in this list:
+// A drop names a row and a SIDE of it, and that is the whole position. Expressing it as an
+// index instead ("take slot 1") reads a list a previous preview already rewrote, so
+// applying the same gesture twice swaps the two rows back — which is why a position has to
+// be anchored to a row that is not moving.
 //
-//   - Already here: it is a REORDER. Move it from where it is to where the target row is
-//     (arrayMove). Inserting "before the target" instead would make a downward drag a
-//     no-op — drag row 1 onto row 2, insert before row 2, and you get [1, 2] back.
-//   - Coming from elsewhere: it is an INSERT, before the target row.
-function moveWithinList(keys: readonly string[], fromIndex: number, toIndex: number): string[] {
-  const next = [...keys];
-  const [moved] = next.splice(fromIndex, 1);
-  if (moved === undefined) {
-    return next;
-  }
-  next.splice(toIndex, 0, moved);
-  return next;
-}
-
-function dropIntoList(keys: readonly string[], key: string, overKey: string | null): string[] {
-  const fromIndex = keys.indexOf(key);
-  const overIndex = overKey === null ? -1 : keys.indexOf(overKey);
-
-  if (fromIndex >= 0) {
-    // Reorder. A drop with no target row (onto a group header) means "no position was
-    // named", so it goes to the end.
-    return moveWithinList(keys, fromIndex, overIndex >= 0 ? overIndex : keys.length - 1);
+// It is also what makes every slot reachable. An insert that is always "before" cannot
+// address the space after the last row of a list, so a row arriving from another group
+// could only ever land above the row it was dropped on.
+function dropIntoList(
+  keys: readonly string[],
+  key: string,
+  overKey: string | null,
+  after: boolean,
+): string[] {
+  // Named itself: it is already where it was put, and there is nothing to move.
+  if (overKey === key && keys.includes(key)) {
+    return [...keys];
   }
 
+  const rest = keys.filter((candidate) => candidate !== key);
+  const overIndex = overKey === null ? -1 : rest.indexOf(overKey);
+
+  // No position was named — a drop onto a group HEADER names the group and nothing else —
+  // or the named row is not in this list. Either way it goes to the end.
   if (overIndex < 0) {
-    return [...keys, key];
+    return [...rest, key];
   }
-  return [...keys.slice(0, overIndex), key, ...keys.slice(overIndex)];
+
+  const at = after ? overIndex + 1 : overIndex;
+  return [...rest.slice(0, at), key, ...rest.slice(at)];
 }
 
 // Teach a stored list about rows that are ON SCREEN but not in it yet.
@@ -120,20 +119,37 @@ function projectKeyIsStored(layout: SidebarLayout, projectKey: string): boolean 
 // `visibleKeys` is one list as the sidebar draws it: a group's members, or the ungrouped
 // remainder. A key the document already files under a DIFFERENT group is left alone — it
 // is known, just not here, and adopting it would put the same project in two places.
+//
+// `movingKey` is the one exception, and it is what makes a cross-group drop land where the
+// screen says it will. The preview carries the dragged row into this list before the drop,
+// so dnd-kit sorts it against the rows already there and paints it below the one under the
+// cursor. Left unadopted the row stays "known, just not here", the drop falls through to
+// the cross-list insert, and an insert lands BEFORE its target — so the row could only ever
+// go above, and reaching the slot below meant dropping and dragging a second time.
+// Adopting it turns the drop into an ordinary reorder within the list the user is looking
+// at. It is spliced out of wherever it was first, so it never occupies two groups.
 export function adoptVisibleProjectKeys(
   layout: SidebarLayout,
-  input: { groupId: string | null; visibleKeys: readonly string[] },
+  input: { groupId: string | null; visibleKeys: readonly string[]; movingKey?: string },
 ): SidebarLayout {
-  const stored = readProjectKeys(layout, input.groupId);
+  // Lifted out of the group it still belongs to first, so adopting it below cannot leave
+  // it in two. A key already in this list is an ordinary reorder and is left alone.
+  const base =
+    input.movingKey !== undefined &&
+    !readProjectKeys(layout, input.groupId).includes(input.movingKey)
+      ? withoutProjectKey(layout, input.movingKey)
+      : layout;
+
+  const stored = readProjectKeys(base, input.groupId);
   const adopted = adoptIntoList({
     stored,
     visible: input.visibleKeys,
-    isElsewhere: (key) => !stored.includes(key) && projectKeyIsStored(layout, key),
+    isElsewhere: (key) => !stored.includes(key) && projectKeyIsStored(base, key),
   });
   if (adopted.length === stored.length) {
     return layout;
   }
-  return setProjectKeysInGroup(layout, { groupId: input.groupId, projectKeys: adopted });
+  return setProjectKeysInGroup(base, { groupId: input.groupId, projectKeys: adopted });
 }
 
 function workspaceKeyIsStored(
@@ -151,19 +167,32 @@ function workspaceKeyIsStored(
 
 export function adoptVisibleWorkspaceKeys(
   layout: SidebarLayout,
-  input: { projectKey: string; groupId: string | null; visibleKeys: readonly string[] },
+  input: {
+    projectKey: string;
+    groupId: string | null;
+    visibleKeys: readonly string[];
+    movingKey?: string;
+  },
 ): SidebarLayout {
-  const stored = readWorkspaceKeys(layout, input.projectKey, input.groupId);
+  // See adoptVisibleProjectKeys: the dragged row is the one key allowed in from another
+  // group, and it is lifted out of that group first.
+  const base =
+    input.movingKey !== undefined &&
+    !readWorkspaceKeys(layout, input.projectKey, input.groupId).includes(input.movingKey)
+      ? withoutWorkspaceKey(layout, input.projectKey, input.movingKey)
+      : layout;
+
+  const stored = readWorkspaceKeys(base, input.projectKey, input.groupId);
   const adopted = adoptIntoList({
     stored,
     visible: input.visibleKeys,
     isElsewhere: (key) =>
-      !stored.includes(key) && workspaceKeyIsStored(layout, input.projectKey, key),
+      !stored.includes(key) && workspaceKeyIsStored(base, input.projectKey, key),
   });
   if (adopted.length === stored.length) {
     return layout;
   }
-  return setWorkspaceKeysInGroup(layout, {
+  return setWorkspaceKeysInGroup(base, {
     projectKey: input.projectKey,
     groupId: input.groupId,
     workspaceKeys: adopted,
@@ -287,9 +316,10 @@ function readProjectKeys(layout: SidebarLayout, groupId: string | null): string[
 
 export function moveProjectToGroup(
   layout: SidebarLayout,
-  input: { projectKey: string; groupId: string | null; beforeKey?: string | null },
+  input: { projectKey: string; groupId: string | null; beforeKey?: string | null; after?: boolean },
 ): SidebarLayout {
   const overKey = input.beforeKey ?? null;
+  const after = input.after ?? false;
 
   // Already in the target list: this is a reorder, and the key must NOT be stripped out
   // first — dropIntoList needs its current index to know which way it moved.
@@ -297,14 +327,19 @@ export function moveProjectToGroup(
   if (target.includes(input.projectKey)) {
     return setProjectKeysInGroup(layout, {
       groupId: input.groupId,
-      projectKeys: dropIntoList(target, input.projectKey, overKey),
+      projectKeys: dropIntoList(target, input.projectKey, overKey, after),
     });
   }
 
   const base = withoutProjectKey(layout, input.projectKey);
   return setProjectKeysInGroup(base, {
     groupId: input.groupId,
-    projectKeys: dropIntoList(readProjectKeys(base, input.groupId), input.projectKey, overKey),
+    projectKeys: dropIntoList(
+      readProjectKeys(base, input.groupId),
+      input.projectKey,
+      overKey,
+      after,
+    ),
   });
 }
 
@@ -459,16 +494,18 @@ export function moveWorkspaceToGroup(
     workspaceKey: string;
     groupId: string | null;
     beforeKey?: string | null;
+    after?: boolean;
   },
 ): SidebarLayout {
   const overKey = input.beforeKey ?? null;
+  const after = input.after ?? false;
 
   const target = readWorkspaceKeys(layout, input.projectKey, input.groupId);
   if (target.includes(input.workspaceKey)) {
     return setWorkspaceKeysInGroup(layout, {
       projectKey: input.projectKey,
       groupId: input.groupId,
-      workspaceKeys: dropIntoList(target, input.workspaceKey, overKey),
+      workspaceKeys: dropIntoList(target, input.workspaceKey, overKey, after),
     });
   }
 
@@ -480,6 +517,7 @@ export function moveWorkspaceToGroup(
       readWorkspaceKeys(base, input.projectKey, input.groupId),
       input.workspaceKey,
       overKey,
+      after,
     ),
   });
 }

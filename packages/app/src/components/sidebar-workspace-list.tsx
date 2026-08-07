@@ -2847,6 +2847,7 @@ function ProjectModeList({
         workspaceKey: event.itemKey,
         groupId: event.toGroupId,
         beforeKey: event.overItemKey,
+        after: event.after,
         visibleKeys,
       });
     },
@@ -2868,6 +2869,7 @@ function ProjectModeList({
         workspaceKey: event.itemKey,
         groupId: event.toGroupId,
         beforeKey: event.overItemKey,
+        after: event.after,
         visibleKeys,
       });
     },
@@ -3189,6 +3191,7 @@ function ProjectModeList({
         projectKey: event.itemKey,
         groupId: event.toGroupId,
         beforeKey: event.overItemKey,
+        after: event.after,
         visibleKeys: visibleProjectKeys(groupedSidebar, event.toGroupId),
       });
     },
@@ -3202,6 +3205,7 @@ function ProjectModeList({
         projectKey: event.itemKey,
         groupId: event.toGroupId,
         beforeKey: event.overItemKey,
+        after: event.after,
         visibleKeys: visibleProjectKeys(groupedSidebar, event.toGroupId),
       });
     },

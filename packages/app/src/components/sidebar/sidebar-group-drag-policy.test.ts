@@ -18,11 +18,44 @@ function section(groupId: string): SidebarGroupDragData {
   return { kind: "sidebar-group-section", groupId };
 }
 
+// `after` is which side of the hovered row the dragged one has reached, and `originGroupId`
+// the group it was in when the drag began — the two the caller measures. Defaulted here so
+// each test states only the part it is about.
+function over(input: {
+  active: SidebarGroupDragData | null;
+  over: SidebarGroupDragData | null;
+  after?: boolean;
+  originGroupId?: string | null;
+}) {
+  // Unstated origin means "the drag has not moved this row yet", which is where it says
+  // it is now.
+  let originGroupId = input.originGroupId ?? null;
+  if (input.originGroupId === undefined && input.active?.kind === "sidebar-group-item") {
+    originGroupId = input.active.groupId;
+  }
+  return decideDragOver({
+    active: input.active,
+    over: input.over,
+    after: input.after ?? false,
+    originGroupId,
+  });
+}
+
+function end(input: {
+  active: SidebarGroupDragData | null;
+  over: SidebarGroupDragData | null;
+  hasPreview: boolean;
+  groupIds: readonly string[];
+  after?: boolean;
+}) {
+  return decideDragEnd({ ...input, after: input.after ?? false });
+}
+
 describe("drag over", () => {
   it("previews a row into the group it is hovering, so a gap opens for it", () => {
     // Without this the target group's SortableContext does not contain the row, its sorting
     // strategy has nothing to shift, and a row dragged in from elsewhere displaces nothing.
-    const action = decideDragOver({ active: row("w1", "a"), over: row("w2", "b") });
+    const action = over({ active: row("w1", "a"), over: row("w2", "b") });
 
     expect(action).toEqual({
       kind: "preview",
@@ -31,6 +64,7 @@ describe("drag over", () => {
         fromGroupId: "a",
         toGroupId: "b",
         overItemKey: "w2",
+        after: false,
       },
     });
   });
@@ -43,28 +77,28 @@ describe("drag over", () => {
     // headers preview, it was that a re-layout could re-fire dragOver and change the target
     // with the pointer standing still. The context forbids that now (see the delta guard),
     // so a header can preview safely.
-    expect(decideDragOver({ active: row("w1", "a"), over: header("b") })).toEqual({
+    expect(over({ active: row("w1", "a"), over: header("b") })).toEqual({
       kind: "preview",
-      event: { itemKey: "w1", fromGroupId: "a", toGroupId: "b", overItemKey: null },
+      event: { itemKey: "w1", fromGroupId: "a", toGroupId: "b", overItemKey: null, after: false },
     });
   });
 
   it("does not preview onto the header of the group it is already in", () => {
-    expect(decideDragOver({ active: row("w1", "a"), over: header("a") })).toEqual({
+    expect(over({ active: row("w1", "a"), over: header("a") })).toEqual({
       kind: "none",
     });
   });
 
   it("previews onto the ungrouped remainder's label", () => {
     // Dragging a row back OUT of a group. The label is a header with a null group.
-    expect(decideDragOver({ active: row("w1", "a"), over: header(null) })).toEqual({
+    expect(over({ active: row("w1", "a"), over: header(null) })).toEqual({
       kind: "preview",
-      event: { itemKey: "w1", fromGroupId: "a", toGroupId: null, overItemKey: null },
+      event: { itemKey: "w1", fromGroupId: "a", toGroupId: null, overItemKey: null, after: false },
     });
   });
 
   it("does not preview a row onto its own group", () => {
-    expect(decideDragOver({ active: row("w1", "a"), over: row("w2", "a") })).toEqual({
+    expect(over({ active: row("w1", "a"), over: row("w2", "a") })).toEqual({
       kind: "none",
     });
   });
@@ -73,11 +107,46 @@ describe("drag over", () => {
     // Pointer over nothing must mean NOTHING CHANGES. Guessing a target here is what made
     // the row snap back to its own group whenever the cursor sat in the gap the drag had
     // just opened.
-    expect(decideDragOver({ active: row("w1", "a"), over: null })).toEqual({ kind: "none" });
+    expect(over({ active: row("w1", "a"), over: null })).toEqual({ kind: "none" });
+  });
+
+  // Reported from dogfooding: a row dragged into another group froze at the position of
+  // its first crossing. The preview rewrites the row's own data to say it lives in the
+  // target group, so every hover after that read as an ordinary same-group drag and was
+  // ignored — and the first crossing always lands "before", so the slot below the row it
+  // arrived at was unreachable without dropping and dragging again.
+  it("keeps previewing a row it has already carried into another group", () => {
+    expect(
+      over({
+        active: row("w1", "b"),
+        over: row("w2", "b"),
+        after: true,
+        originGroupId: "a",
+      }),
+    ).toEqual({
+      kind: "preview",
+      event: { itemKey: "w1", fromGroupId: "b", toGroupId: "b", overItemKey: "w2", after: true },
+    });
+  });
+
+  // The same row, now genuinely back where it started: dnd-kit's own sorting draws this
+  // one, and previewing as well would rewrite the layout on every hover for no gain.
+  it("does not preview a row sorting inside the group it started in", () => {
+    expect(
+      over({ active: row("w1", "a"), over: row("w2", "a"), after: true, originGroupId: "a" }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("previews onto its own header once it has been carried in, landing last", () => {
+    // The only way to say "last in this group" when there is no row below to aim at.
+    expect(over({ active: row("w1", "b"), over: header("b"), originGroupId: "a" })).toEqual({
+      kind: "preview",
+      event: { itemKey: "w1", fromGroupId: "b", toGroupId: "b", overItemKey: null, after: false },
+    });
   });
 
   it("does not preview while a group section is being dragged", () => {
-    expect(decideDragOver({ active: section("a"), over: row("w2", "b") })).toEqual({
+    expect(over({ active: section("a"), over: row("w2", "b") })).toEqual({
       kind: "none",
     });
   });
@@ -87,7 +156,7 @@ describe("drag end", () => {
   const groupIds = ["a", "b", "c"];
 
   it("commits a row onto the row it was dropped on", () => {
-    const action = decideDragEnd({
+    const action = end({
       active: row("w1", "a"),
       over: row("w2", "b"),
       hasPreview: true,
@@ -96,13 +165,13 @@ describe("drag end", () => {
 
     expect(action).toEqual({
       kind: "commit",
-      event: { itemKey: "w1", fromGroupId: "a", toGroupId: "b", overItemKey: "w2" },
+      event: { itemKey: "w1", fromGroupId: "a", toGroupId: "b", overItemKey: "w2", after: false },
     });
   });
 
   it("commits to the end of a group when dropped on its header", () => {
     // The only way to fill a group that is still empty: it has no rows to drop between.
-    const action = decideDragEnd({
+    const action = end({
       active: row("w1", "a"),
       over: header("b"),
       hasPreview: false,
@@ -111,7 +180,7 @@ describe("drag end", () => {
 
     expect(action).toEqual({
       kind: "commit",
-      event: { itemKey: "w1", fromGroupId: "a", toGroupId: "b", overItemKey: null },
+      event: { itemKey: "w1", fromGroupId: "a", toGroupId: "b", overItemKey: null, after: false },
     });
   });
 
@@ -119,7 +188,7 @@ describe("drag end", () => {
     // The row is visibly sitting in the other group with a gap held open for it. Snapping
     // it home would throw away exactly what is on screen — and letting go while the pointer
     // rests in that gap is the most ordinary way to finish the gesture.
-    const action = decideDragEnd({
+    const action = end({
       active: row("w1", "b"),
       over: null,
       hasPreview: true,
@@ -128,21 +197,21 @@ describe("drag end", () => {
 
     expect(action).toEqual({
       kind: "commit",
-      event: { itemKey: "w1", fromGroupId: "b", toGroupId: "b", overItemKey: "w1" },
+      event: { itemKey: "w1", fromGroupId: "b", toGroupId: "b", overItemKey: "w1", after: false },
     });
   });
 
   it("does nothing when released over nothing WITHOUT a preview", () => {
-    expect(
-      decideDragEnd({ active: row("w1", "a"), over: null, hasPreview: false, groupIds }),
-    ).toEqual({ kind: "none" });
+    expect(end({ active: row("w1", "a"), over: null, hasPreview: false, groupIds })).toEqual({
+      kind: "none",
+    });
   });
 
   it("commits a self-drop once a preview has carried the row somewhere new", () => {
     // Dropping a row on itself is normally a no-op. But after a preview the row is NOT
     // where it started, and discarding here would silently undo the move the user watched
     // happen.
-    const action = decideDragEnd({
+    const action = end({
       active: row("w1", "b"),
       over: row("w1", "b"),
       hasPreview: true,
@@ -151,18 +220,18 @@ describe("drag end", () => {
 
     expect(action).toEqual({
       kind: "commit",
-      event: { itemKey: "w1", fromGroupId: "b", toGroupId: "b", overItemKey: "w1" },
+      event: { itemKey: "w1", fromGroupId: "b", toGroupId: "b", overItemKey: "w1", after: false },
     });
   });
 
   it("does nothing on a self-drop that never moved", () => {
     expect(
-      decideDragEnd({ active: row("w1", "a"), over: row("w1", "a"), hasPreview: false, groupIds }),
+      end({ active: row("w1", "a"), over: row("w1", "a"), hasPreview: false, groupIds }),
     ).toEqual({ kind: "none" });
   });
 
   it("reorders groups when a section is dropped on another section", () => {
-    const action = decideDragEnd({
+    const action = end({
       active: section("c"),
       over: section("a"),
       hasPreview: false,
@@ -175,7 +244,7 @@ describe("drag end", () => {
   it("reorders a group DOWNWARD, not just upward", () => {
     // The direction bug, at the group level: a move that only ever inserts before its
     // target makes a downward drag a no-op.
-    const action = decideDragEnd({
+    const action = end({
       active: section("a"),
       over: section("c"),
       hasPreview: false,
@@ -187,7 +256,7 @@ describe("drag end", () => {
 
   it("never mixes the two kinds: a section dropped on a row does nothing", () => {
     expect(
-      decideDragEnd({ active: section("a"), over: row("w1", "b"), hasPreview: false, groupIds }),
+      end({ active: section("a"), over: row("w1", "b"), hasPreview: false, groupIds }),
     ).toEqual({ kind: "none" });
   });
 });

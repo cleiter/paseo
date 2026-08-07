@@ -224,16 +224,70 @@ beside, and the move runs against that. Two properties are load-bearing:
   order — and the whole point of retaining unresolvable keys is that a multi-daemon layout
   survives being viewed from a machine that sees half of it.
 - **Adopt only into the target list.** A key the document already files under another group
-  is known, just not here; adopting it would put one project in two groups.
+  is known, just not here; adopting it would put one project in two groups. The row the
+  drag is carrying (`movingKey`) is the single exception, and it is lifted out of its old
+  group as it is adopted — see below.
 
 The row menus pass no visible list and get the document untouched, which is correct: they
 name a group, not a position.
+
+### A row from another group could only ever land ABOVE
+
+Reported from dogfooding: drag a workspace out of one group and onto a row of another, and
+it goes above that row. The slot below it is unreachable — you have to drop, then drag the
+same row a second time. Two causes, both of which had to go.
+
+**A drop said which row, not which side.** `dropIntoList` inserted _before_ its target, so
+the position below a row was unaddressable — and past the last row there is no row below to
+aim at instead. `SidebarGroupDropEvent` now carries `after`, and a position is a row plus a
+side. Say it as a side rather than an index: an index reads a list the last preview already
+rewrote, so applying the same gesture twice swaps the two rows straight back and the
+preview flickers under a hand that is barely moving. "After that row" is the same answer
+however many times it is applied.
+
+**The preview froze at the first crossing.** A preview moves the row into the target list,
+which rewrites its own drag data to say it lives there — so every hover after that read as
+an ordinary same-group sort and `decideDragOver` ignored it. The position was fixed by
+wherever the boundary happened to be crossed. So the policy is told the group the row was
+in when the drag **began**, and only bails when the row is both in the hovered group and
+still in its origin group. A row already carried in keeps refining, and its new group's own
+header becomes a live "put me last" target.
+
+Which side the row has reached has two sources, and picking the wrong one for the case
+breaks the other one:
+
+- **Still in its origin group** — dnd-kit owns the sort and is painting it, so its
+  `sortable` indices are the answer: a row travelling toward a higher index in the same
+  `SortableContext` is passing below its target. Measuring here reads rectangles the
+  sorting strategy is at that moment animating, and gets the side wrong.
+- **A preview has carried it** — those indices now describe a list this drag itself wrote,
+  so deriving a position from them and writing it back is circular. Only the rectangles are
+  independent of what we already decided: compare the translated active centre against the
+  hovered row's centre.
+
+Both live in `decideAfter` in `sidebar-group-drag-context.web.tsx`. Neither is visible from
+a unit test, which is why the cross-group case is also an e2e (see Testing).
+
+**`after` is required, everywhere it is passed.** There are four drop handlers — drop and
+preview, for projects and for workspaces — and the project pair was written without it
+while the workspace pair beside them had it. An absent side reads as "above", so nothing
+failed: dragging a project DOWN past its neighbour was a silent no-op and dragging it up
+worked, for as long as it took someone to try it. That is why `useGroupActions` takes
+`after: boolean` and not `after?: boolean`. Anything positional you add here, make it
+required for the same reason.
 
 ## Testing
 
 - `sidebar-group-drag-policy.test.ts` — one case per bug that shipped, each named for the
   **symptom** rather than the function. Add to it before fixing a drag bug.
 - `sidebar-layout-edits.test.ts` — the document edits, including the direction cases. A
-  drop names the row it landed _on_; within a list that is a **reorder** (move from its
-  index to the target's), not an insert. Inserting "before the target" makes a downward
-  drag a silent no-op, which is how it shipped the first time.
+  drop names a row **and a side**; a test that leaves the side unstated is asserting on
+  "above", which is how the downward drag shipped as a silent no-op the first time.
+- `e2e/browser/sidebar-group-drag.spec.ts` — the drags themselves, in a real browser,
+  asserting on the rendered order. The unit tests cannot reach these: which side the row
+  has reached is read off dnd-kit's own measurements, and a fix that made every policy test
+  pass while still being wrong in the app is the reason the file exists. Cover **both
+  levels** — a workspace row inside a project and a project row inside a project group are
+  different code paths that look identical on screen, and the direction bug survived in the
+  project one while the workspace one was green. Rows are not nested inside their group in
+  the DOM, so assert membership positionally, against the group headers.

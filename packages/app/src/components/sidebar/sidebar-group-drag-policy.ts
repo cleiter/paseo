@@ -32,6 +32,14 @@ function asGroupSection(data: SidebarGroupDragData | null) {
 export function decideDragOver(input: {
   active: SidebarGroupDragData | null;
   over: SidebarGroupDragData | null;
+  // Which side of the hovered row the dragged row is on. Supplied by the caller, which is
+  // the only place the rectangles live.
+  after: boolean;
+  // The group the row was in when the drag STARTED. Once a preview has carried it into
+  // another group, its own data says it lives there — so "same group" stops meaning "this
+  // drag has not moved it" and the preview could never be refined again. That is what made
+  // the first crossing final.
+  originGroupId: string | null;
 }): SidebarGroupDragAction {
   const activeRow = asRow(input.active);
   if (!activeRow || !input.over) {
@@ -52,7 +60,10 @@ export function decideDragOver(input: {
   // the pointer standing still. The caller now refuses to act on a dragOver whose pointer
   // delta has not changed, which forbids that outright — so a header can preview safely.
   if (input.over.kind === "sidebar-group-header") {
-    if (input.over.groupId === activeRow.groupId) {
+    // Its own header, and the drag has not moved it: nothing to show. Once it HAS been
+    // carried in, the header is a live target again — it is how you say "last in this
+    // group" without a row below to aim at.
+    if (input.over.groupId === activeRow.groupId && activeRow.groupId === input.originGroupId) {
       return NONE;
     }
     return {
@@ -62,12 +73,20 @@ export function decideDragOver(input: {
         fromGroupId: activeRow.groupId,
         toGroupId: input.over.groupId,
         overItemKey: null,
+        after: false,
       },
     };
   }
 
   const overRow = asRow(input.over);
-  if (!overRow || overRow.groupId === activeRow.groupId) {
+  if (!overRow || overRow.itemKey === activeRow.itemKey) {
+    return NONE;
+  }
+
+  // A row still in the group it started in sorts against its neighbours inside one
+  // SortableContext, and dnd-kit's own strategy draws that. Previewing it as well would
+  // write the layout on every hover of an ordinary in-group drag for no visible gain.
+  if (overRow.groupId === activeRow.groupId && activeRow.groupId === input.originGroupId) {
     return NONE;
   }
 
@@ -78,6 +97,7 @@ export function decideDragOver(input: {
       fromGroupId: activeRow.groupId,
       toGroupId: overRow.groupId,
       overItemKey: overRow.itemKey,
+      after: input.after,
     },
   };
 }
@@ -88,8 +108,9 @@ export function decideDragEnd(input: {
   // Whether this drag already carried the row into another group.
   hasPreview: boolean;
   groupIds: readonly string[];
+  after: boolean;
 }): SidebarGroupDragAction {
-  const { active, over, hasPreview, groupIds } = input;
+  const { active, over, hasPreview, groupIds, after } = input;
 
   // A group section was dragged.
   const activeGroup = asGroupSection(active);
@@ -132,6 +153,7 @@ export function decideDragEnd(input: {
         fromGroupId: activeRow.groupId,
         toGroupId: over.groupId,
         overItemKey: null,
+        after: false,
       },
     };
   }
@@ -154,6 +176,7 @@ export function decideDragEnd(input: {
       fromGroupId: activeRow.groupId,
       toGroupId: overRow.groupId,
       overItemKey: overRow.itemKey,
+      after,
     },
   };
 }
@@ -169,6 +192,7 @@ function commitInPlace(activeRow: {
       fromGroupId: activeRow.groupId,
       toGroupId: activeRow.groupId,
       overItemKey: activeRow.itemKey,
+      after: false,
     },
   };
 }
