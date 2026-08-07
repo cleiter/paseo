@@ -8,6 +8,9 @@ import { openSettingsSection } from "../../app/e2e/support/helpers/settings";
 // checks for `window.paseoDesktop` -- so this belongs in the desktop suite even
 // though no `.electron.*` module sits in the surface's import path.
 const SHORTCUTS_ROW = "show-shortcuts";
+// Rebinding is asserted on a different row than unassigning: `show-shortcuts`
+// carries a display override (`?`), so its badge would not move when rebound.
+const REBIND_ROW = "new-workspace";
 
 /**
  * The smallest bridge that makes the app believe it is Electron. The built-in
@@ -49,6 +52,17 @@ async function openShortcutsSettings(page: Page) {
 async function openRowMenu(page: Page) {
   await page.getByTestId(`shortcut-actions-${SHORTCUTS_ROW}`).click();
   await expect(page.getByTestId(`shortcut-bind-${SHORTCUTS_ROW}`)).toBeVisible();
+}
+
+/** Reachable from the sidebar even when the cheat sheet's own shortcut is gone. */
+async function openCheatSheet(page: Page) {
+  await gotoAppShell(page);
+  await page.getByTestId("sidebar-help").click();
+  await expect(page.getByTestId("sidebar-help-menu")).toBeVisible();
+  await page.getByTestId("sidebar-help-shortcuts").click();
+  const dialog = page.getByTestId("keyboard-shortcuts-dialog");
+  await expect(dialog).toBeVisible({ timeout: 10_000 });
+  return dialog;
 }
 
 async function closeRowMenu(page: Page) {
@@ -120,14 +134,7 @@ test("an unassigned shortcut lists no keys in the shortcuts cheat sheet", async 
   await page.getByTestId(`shortcut-clear-${SHORTCUTS_ROW}`).click();
   await expect(page.getByText("Not set", { exact: true })).toBeVisible();
 
-  // Reachable from the sidebar even with its own shortcut unassigned.
-  await gotoAppShell(page);
-  await page.getByTestId("sidebar-help").click();
-  await expect(page.getByTestId("sidebar-help-menu")).toBeVisible();
-  await page.getByTestId("sidebar-help-shortcuts").click();
-
-  const dialog = page.getByTestId("keyboard-shortcuts-dialog");
-  await expect(dialog).toBeVisible({ timeout: 10_000 });
+  const dialog = await openCheatSheet(page);
 
   const row = dialog
     .locator("div")
@@ -136,4 +143,30 @@ test("an unassigned shortcut lists no keys in the shortcuts cheat sheet", async 
   await expect(row).toBeVisible();
   // No badge pill, blank or otherwise, for a shortcut with no keys.
   await expect(dialog.getByText("?", { exact: true })).toHaveCount(0);
+  // It says so, rather than leaving a silent gap where the keys were. Same word
+  // Settings uses for the same state.
+  await expect(row.getByText("Unassigned", { exact: true })).toBeVisible();
+});
+
+test("a rebound shortcut lists its new keys in the shortcuts cheat sheet", async ({ page }) => {
+  await openShortcutsSettings(page);
+
+  // The bridge reports darwin, so the mac binding is the active one and the
+  // badges render ⌘ regardless of the host this suite runs on.
+  const defaultKeys = page.getByText("⌘N", { exact: true });
+  await expect(defaultKeys).toBeVisible();
+
+  await page.getByTestId(`shortcut-actions-${REBIND_ROW}`).click();
+  await page.getByTestId(`shortcut-bind-${REBIND_ROW}`).click();
+  await page.keyboard.press("Alt+Shift+K");
+  await page.getByText("Done", { exact: true }).click();
+
+  const reboundKeys = page.getByText("⌥+Shift+K", { exact: true });
+  await expect(reboundKeys).toBeVisible();
+  await expect(defaultKeys).toHaveCount(0);
+
+  const dialog = await openCheatSheet(page);
+  await expect(dialog.getByText("⌥+Shift+K", { exact: true })).toBeVisible();
+  // The whole point: the cheat sheet stops advertising the shipped default.
+  await expect(dialog.getByText("⌘N", { exact: true })).toHaveCount(0);
 });
