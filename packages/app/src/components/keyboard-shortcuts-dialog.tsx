@@ -70,7 +70,7 @@ export function KeyboardShortcutsDialog() {
             <Text style={styles.sectionTitle}>{t(section.titleKey)}</Text>
             <View style={styles.rows}>
               {section.rows.map((row) => (
-                <View key={row.id} style={styles.row}>
+                <View key={row.id} style={styles.row} testID={`shortcut-help-row-${row.id}`}>
                   <View style={styles.rowText}>
                     <Text style={styles.rowLabel}>{t(row.labelKey)}</Text>
                     {row.note ? (

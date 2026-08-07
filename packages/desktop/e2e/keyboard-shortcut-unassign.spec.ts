@@ -136,16 +136,16 @@ test("an unassigned shortcut lists no keys in the shortcuts cheat sheet", async 
 
   const dialog = await openCheatSheet(page);
 
-  const row = dialog
-    .locator("div")
-    .filter({ hasText: /^Show keyboard shortcuts$/ })
-    .first();
+  // Addressed by testID rather than by filtering on its own text: an anchored
+  // `hasText` matches only the innermost node holding exactly that label, so a
+  // row-scoped assertion about anything *else* in the row finds nothing.
+  const row = dialog.getByTestId(`shortcut-help-row-${SHORTCUTS_ROW}`);
   await expect(row).toBeVisible();
   // No badge pill, blank or otherwise, for a shortcut with no keys.
   await expect(dialog.getByText("?", { exact: true })).toHaveCount(0);
-  // It says so, rather than leaving a silent gap where the keys were. Same word
-  // Settings uses for the same state.
-  await expect(row.getByText("Unassigned", { exact: true })).toBeVisible();
+  // It says so, rather than leaving a silent gap where the keys were. Same words
+  // the settings row uses for the same state.
+  await expect(row.getByText("Not set", { exact: true })).toBeVisible();
 });
 
 test("a rebound shortcut lists its new keys in the shortcuts cheat sheet", async ({ page }) => {
@@ -166,7 +166,8 @@ test("a rebound shortcut lists its new keys in the shortcuts cheat sheet", async
   await expect(defaultKeys).toHaveCount(0);
 
   const dialog = await openCheatSheet(page);
-  await expect(dialog.getByText("⌥+Shift+K", { exact: true })).toBeVisible();
+  const row = dialog.getByTestId(`shortcut-help-row-${REBIND_ROW}`);
+  await expect(row.getByText("⌥+Shift+K", { exact: true })).toBeVisible();
   // The whole point: the cheat sheet stops advertising the shipped default.
-  await expect(dialog.getByText("⌘N", { exact: true })).toHaveCount(0);
+  await expect(row.getByText("⌘N", { exact: true })).toHaveCount(0);
 });
