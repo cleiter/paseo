@@ -346,6 +346,9 @@ function SidebarWorkspaceMenuItems({
         <MenuSubTrigger
           id={WORKSPACE_GROUP_PAGE_ID}
           value={currentGroupName}
+          // This menu is a column of actions, every one of them carrying its glyph. A root
+          // row goes without one only where the whole root is labels and their values.
+          leading={workspaceGroupLeadingIcon}
           testID={`sidebar-workspace-menu-move-to-group-${workspaceKey}`}
         >
           {t("sidebar.workspaceGroup.moveToGroup")}

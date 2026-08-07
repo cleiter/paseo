@@ -777,6 +777,9 @@ function ProjectMenuItems({
             groupMenu.availableGroups.find((group) => group.groupId === groupMenu.currentGroupId)
               ?.groupName
           }
+          // This menu is a column of actions, every one of them carrying its glyph. A root
+          // row goes without one only where the whole root is labels and their values.
+          leading={folderLeadingIcon}
           testID={`sidebar-project-menu-move-to-group-${projectViewKey}`}
         >
           {t("sidebar.projectGroup.moveToGroup")}
