@@ -3059,7 +3059,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
-        // COMPAT(sidebarLayout): added in v0.1.108, remove gate after 2027-01-14.
+        // COMPAT(sidebarLayout): added in v0.3.0, remove gate after 2027-01-14.
         sidebarLayout: z.boolean().optional(),
       })
       .optional(),
