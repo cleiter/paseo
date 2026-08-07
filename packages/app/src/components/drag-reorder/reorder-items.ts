@@ -7,12 +7,21 @@ export interface DragEndInput<T> {
   keyExtractor: (item: T, index: number) => string;
 }
 
+export interface DragEndResult<T> {
+  items: T[];
+  from: number;
+  to: number;
+}
+
+// The over row's index IS the insertion index: arrayMove(items, from, to) removes the
+// dragged row first, so `to` counts positions in the list without it — which is what the
+// native list reports too, and what lets one policy read both.
 export function reorderItemsOnDragEnd<T>({
   items,
   activeId,
   overId,
   keyExtractor,
-}: DragEndInput<T>): T[] | null {
+}: DragEndInput<T>): DragEndResult<T> | null {
   if (!overId || activeId === overId) return null;
 
   const oldIndex = items.findIndex((item, i) => keyExtractor(item, i) === activeId);
@@ -20,5 +29,5 @@ export function reorderItemsOnDragEnd<T>({
 
   if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return null;
 
-  return arrayMove(items, oldIndex, newIndex);
+  return { items: arrayMove(items, oldIndex, newIndex), from: oldIndex, to: newIndex };
 }

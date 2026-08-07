@@ -4,12 +4,15 @@ import DraggableFlatList, {
   NestableDraggableFlatList,
   type RenderItemParams,
 } from "react-native-draggable-flatlist";
+import { useSharedValue } from "react-native-reanimated";
 import { useUnistyles } from "react-native-unistyles";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
 const SCROLL_ENABLED_FLEX_STYLE = { flex: 1 };
+
+const noop = () => {};
 
 export function DraggableList<T>({
   data,
@@ -33,10 +36,19 @@ export function DraggableList<T>({
   gestureHostPresented,
   waitFor,
   onDragBegin: onDragBeginProp,
+  onDragTerminate,
+  canDrag,
+  getValidSlots,
+  // Web-only: native reshapes its rows before calling drag() instead, because this list
+  // cancels any drag whose data changes underneath it.
+  getDragSnapshot: _getDragSnapshot,
   nestable = false,
 }: DraggableListProps<T>) {
   const { theme } = useUnistyles();
   const [isDragging, setIsDragging] = useState(false);
+  // Read from the spacer worklet on every frame, so it has to be a shared value rather
+  // than a prop the JS thread owns.
+  const validSlots = useSharedValue<number[]>([]);
 
   // Pass the ref directly to DraggableFlatList - it handles gesture
   // coordination internally for nestable lists.
@@ -56,27 +68,43 @@ export function DraggableList<T>({
       const info: DraggableRenderItemInfo<T> = {
         item,
         index,
-        drag,
+        // A row that cannot be dragged simply never starts one. There is no "disabled"
+        // to set: the list hands each row the callback and lets the row decide.
+        drag: canDrag && !canDrag(item, index) ? noop : drag,
         isActive,
       };
       return renderItem(info);
     },
-    [renderItem],
+    [renderItem, canDrag],
   );
 
   const handleDragEnd = useCallback(
-    ({ data: newData }: { data: T[] }) => {
+    ({ data: newData, from, to }: { data: T[]; from: number; to: number }) => {
       setIsDragging(false);
-      onDragEnd(newData);
+      validSlots.value = [];
+      onDragEnd(newData, { from, to });
     },
-    [onDragEnd],
+    [onDragEnd, validSlots],
   );
 
-  const handleDragBegin = useCallback(() => {
-    setIsDragging(true);
-    onDragBeginProp?.();
-  }, [onDragBeginProp]);
+  const handleDragBegin = useCallback(
+    (index: number) => {
+      setIsDragging(true);
+      validSlots.value = getValidSlots?.(data, index) ?? [];
+      onDragBeginProp?.(index);
+    },
+    [onDragBeginProp, getValidSlots, data, validSlots],
+  );
 
+  const handleDragTerminate = useCallback(() => {
+    setIsDragging(false);
+    validSlots.value = [];
+    onDragTerminate?.();
+  }, [onDragTerminate, validSlots]);
+
+  // Release is NOT the end of the drag: it fires before the settle spring, and the drop
+  // itself lands after it. Only the drag-active flag — which just gates the refresh
+  // control — is safe to clear here.
   const handleRelease = useCallback(() => {
     setIsDragging(false);
   }, []);
@@ -124,7 +152,9 @@ export function DraggableList<T>({
       // lists are inside a scroll container.
       activationDistance={20}
       onDragBegin={handleDragBegin}
+      onDragTerminate={handleDragTerminate}
       onRelease={handleRelease}
+      validSlots={validSlots}
       // @ts-ignore - waitFor is supported by RNGH FlatList but missing from DraggableFlatList types
       waitFor={waitFor}
       refreshControl={refreshControl}

@@ -20,11 +20,20 @@ export interface DraggableRenderItemInfo<T> {
   dragHandleProps?: DraggableListDragHandleProps;
 }
 
+// Where the drop landed, in the SAME index space on both platforms: `to` is an insertion
+// index into the data with the dragged row removed, so `arrayMove(data, from, to)` is the
+// new order. dnd-kit's arrayMove and the native list's splice pair agree on this; the
+// caller can read the row above `to` to decide what the drop meant.
+export interface DraggableListDropMeta {
+  from: number;
+  to: number;
+}
+
 export interface DraggableListProps<T> {
   data: T[];
   keyExtractor: (item: T, index: number) => string;
   renderItem: (info: DraggableRenderItemInfo<T>) => ReactElement;
-  onDragEnd: (data: T[]) => void;
+  onDragEnd: (data: T[], meta: DraggableListDropMeta) => void;
   style?: StyleProp<ViewStyle>;
   /** Outer container style (useful for nested, non-scrolling lists). */
   containerStyle?: StyleProp<ViewStyle>;
@@ -54,7 +63,43 @@ export interface DraggableListProps<T> {
   /** Gesture ref(s) that the list should wait for before handling scroll */
   waitFor?: MutableRefObject<GestureType | undefined> | MutableRefObject<GestureType | undefined>[];
   /** Called when a drag gesture begins (before items are reordered) */
-  onDragBegin?: () => void;
+  onDragBegin?: (index: number) => void;
+  /**
+   * Called when a drag ends WITHOUT a drop — cancelled, interrupted, or unmounted.
+   * Together with `onDragEnd` this is the complete set of drag-state cleanup triggers.
+   * `onDragRelease` is not one of them: on native it fires before the settle spring, so
+   * cleaning up there tears down the drag while it is still animating into place.
+   */
+  onDragTerminate?: () => void;
+  /**
+   * Whether a row may START a drag. A row that answers false still takes part in the
+   * layout and can still be dropped past; it just cannot be picked up. Kept separate
+   * from where a drop may LAND because dnd-kit's single `disabled` flag turns off both
+   * at once, and rows that cannot be dragged are usually the ones you drop next to.
+   */
+  canDrag?: (item: T, index: number) => boolean;
+  /**
+   * Where this drag may land, as insertion indices into the data with the dragged row
+   * removed — the same space as `DraggableListDropMeta`. Asked once when the drag
+   * begins, and answered against the data the drag will actually run on.
+   *
+   * The list makes every other slot UNREACHABLE rather than rejecting a drop on it: the
+   * native spacer snaps to the nearest valid slot, and web disables the other rows as
+   * drop targets. Nothing else can express "the gap only opens where the drop lands",
+   * and on native a rejected drop leaves the rows it displaced holding their translate.
+   *
+   * An empty result means no restriction.
+   */
+  getValidSlots?: (data: T[], from: number) => number[];
+  /**
+   * WEB ONLY. The data to run the drag against, given the row being picked up — the
+   * chance to fold a container's children away as it lifts. The drag is frozen against
+   * what this returns; `data` changing mid-drag does not disturb it.
+   *
+   * Native has no equivalent hook, because the underlying list cancels a drag whose data
+   * changes: the owner has to reshape the rows BEFORE calling `drag()` instead.
+   */
+  getDragSnapshot?: (data: T[], from: number) => T[];
   /** Called immediately before invoking row `drag()` to lock outer owners. */
   onDragIntent?: () => void;
   /** Called when drag interaction ends (finger released). */

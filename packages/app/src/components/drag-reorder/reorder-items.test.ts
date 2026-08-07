@@ -13,7 +13,21 @@ describe("reorderItemsOnDragEnd", () => {
         overId: "gamma",
         keyExtractor: byValue,
       }),
-    ).toEqual(["beta", "gamma", "alpha"]);
+    ).toEqual({ items: ["beta", "gamma", "alpha"], from: 0, to: 2 });
+  });
+
+  // `to` counts positions in the list WITHOUT the dragged row, which is what the native
+  // list reports as well. Reporting the over row's index in the original list instead
+  // would be off by one for every downward move, and the two platforms would disagree.
+  it("reports where the row ends up, not where the row it passed used to be", () => {
+    expect(
+      reorderItemsOnDragEnd({
+        items,
+        activeId: "gamma",
+        overId: "alpha",
+        keyExtractor: byValue,
+      }),
+    ).toEqual({ items: ["gamma", "alpha", "beta"], from: 2, to: 0 });
   });
 
   it("is a no-op when the drop target is missing", () => {

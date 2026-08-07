@@ -4,6 +4,7 @@ import {
   DndContext,
   closestCenter,
   KeyboardSensor,
+  MeasuringStrategy,
   MouseSensor,
   TouchSensor,
   type Modifier,
@@ -33,6 +34,13 @@ const restrictToVerticalAxis: Modifier = ({ transform }) => ({
 
 const DND_MODIFIERS = [restrictToVerticalAxis];
 
+// The rows a drag runs against are not the ones it started from — picking up a group folds
+// its children away. dnd-kit measures droppables once at drag start by default, so it would
+// keep aiming at rects for rows that are no longer on screen.
+const REMEASURE_ALWAYS = {
+  droppable: { strategy: MeasuringStrategy.Always },
+};
+
 interface SortableItemProps<T> {
   id: string;
   item: T;
@@ -42,6 +50,8 @@ interface SortableItemProps<T> {
   useDragHandle: boolean;
   itemData?: Record<string, unknown>;
   externallyControlled: boolean;
+  canDrag: boolean;
+  canDrop: boolean;
 }
 
 // When an ancestor owns the drag, the new order arrives as DATA — the row is already in
@@ -67,6 +77,8 @@ function SortableItemInner<T>({
   useDragHandle,
   itemData,
   externallyControlled,
+  canDrag,
+  canDrop,
 }: SortableItemProps<T>) {
   const {
     attributes,
@@ -79,6 +91,10 @@ function SortableItemInner<T>({
   } = useSortable({
     id,
     data: itemData,
+    // Granular on purpose. `disabled: true` turns off the drop target as well as the drag
+    // source, and the rows you cannot pick up — section headers, the "show more" toggle —
+    // are exactly the ones a drop needs to be able to land next to.
+    disabled: { draggable: !canDrag, droppable: !canDrop },
     ...(externallyControlled ? { animateLayoutChanges: NO_LAYOUT_ANIMATION } : {}),
   });
 
@@ -175,6 +191,10 @@ export function DraggableList<T>({
   useDragHandle = false,
   // simultaneousGestureRef is native-only, ignored on web
   onDragBegin,
+  onDragTerminate,
+  canDrag,
+  getValidSlots,
+  getDragSnapshot,
   nestable: _nestable = false,
   externalDndContext = false,
   getItemData,
@@ -185,6 +205,8 @@ export function DraggableList<T>({
     keyExtractor,
     onDragEnd,
     onDragBegin,
+    onDragTerminate,
+    snapshotForDrag: getDragSnapshot,
   });
   const activationConstraints = getDragActivationConstraints(
     useDragHandle,
@@ -213,6 +235,16 @@ export function DraggableList<T>({
     () => items.map((item, index) => keyExtractor(item, index)),
     [items, keyExtractor],
   );
+
+  // Asked once per drag, against the rows the drag is running on. Null means "not
+  // dragging, or no restriction" — every row stays droppable.
+  const validSlots = useMemo(() => {
+    if (!getValidSlots || internal.activeIndex < 0) {
+      return null;
+    }
+    const slots = getValidSlots(items, internal.activeIndex);
+    return slots.length > 0 ? new Set(slots) : null;
+  }, [getValidSlots, items, internal.activeIndex]);
   const wrapperStyle = useMemo(
     () => [
       { position: "relative" as const },
@@ -237,6 +269,8 @@ export function DraggableList<T>({
             useDragHandle={useDragHandle}
             itemData={getItemData?.(item, index)}
             externallyControlled={externalDndContext}
+            canDrag={canDrag ? canDrag(item, index) : true}
+            canDrop={validSlots ? validSlots.has(index) : true}
           />
         );
       })}
@@ -252,6 +286,7 @@ export function DraggableList<T>({
       sensors={sensors}
       collisionDetection={closestCenter}
       modifiers={DND_MODIFIERS}
+      measuring={getDragSnapshot ? REMEASURE_ALWAYS : undefined}
       onDragStart={handlers.onDragStart}
       onDragCancel={handlers.onDragCancel}
       onDragEnd={handlers.onDragEnd}

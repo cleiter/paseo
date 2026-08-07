@@ -6,27 +6,32 @@ describe("dragStateReducer", () => {
     const next = dragStateReducer(dragStateInitial<string>(), {
       type: "start",
       id: "alpha",
+      index: 0,
       data: ["alpha", "beta"],
     });
 
-    expect(next).toEqual({ activeId: "alpha", dragItems: ["alpha", "beta"] });
+    expect(next).toEqual({ activeId: "alpha", activeIndex: 0, dragItems: ["alpha", "beta"] });
   });
 
   it("clears the active item and the snapshot", () => {
     const next = dragStateReducer(
-      { activeId: "alpha", dragItems: ["alpha", "beta"] },
+      { activeId: "alpha", activeIndex: 0, dragItems: ["alpha", "beta"] },
       { type: "clear" },
     );
 
-    expect(next).toEqual({ activeId: null, dragItems: null });
+    expect(next).toEqual({ activeId: null, activeIndex: -1, dragItems: null });
   });
 
   it("replaces an in-flight drag when a new one starts", () => {
     const next = dragStateReducer(
-      { activeId: "alpha", dragItems: ["alpha", "beta"] },
-      { type: "start", id: "beta", data: ["beta", "gamma"] },
+      { activeId: "alpha", activeIndex: 0, dragItems: ["alpha", "beta"] },
+      { type: "start", id: "beta", index: 1, data: ["alpha", "beta", "gamma"] },
     );
 
-    expect(next).toEqual({ activeId: "beta", dragItems: ["beta", "gamma"] });
+    expect(next).toEqual({
+      activeId: "beta",
+      activeIndex: 1,
+      dragItems: ["alpha", "beta", "gamma"],
+    });
   });
 });
