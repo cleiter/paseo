@@ -29,9 +29,12 @@ export function QuitDialogSync(): null {
       quitLabel: i18n.t("desktop.quitConfirm.quit"),
       cancelLabel: i18n.t("desktop.quitConfirm.cancel"),
       keepDaemonRunningLabel: i18n.t("desktop.quitConfirm.keepDaemonRunning"),
-    }).catch(() => {
+    }).catch((error: unknown) => {
       // Non-fatal: main keeps whatever copy it already has, falling back to
-      // its English constants. A failed push must never break the app.
+      // its English constants. A failed push must never break the app, but it
+      // must not be invisible either — an English dialog on a translated app is
+      // otherwise impossible to explain.
+      console.warn("[quit-dialog-sync] Failed to push quit dialog copy", error);
     });
   }, [i18n, language]);
 
