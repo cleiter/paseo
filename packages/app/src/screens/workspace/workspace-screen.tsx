@@ -74,6 +74,7 @@ import { traceInstant } from "@/performance/native-trace";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   collectAllTabs,
+  findPaneContainingTab,
   getFocusedBrowserId,
   isTabFocusedAmongSiblings,
   isTabVisibleInAnyPane,
@@ -2242,11 +2243,11 @@ function WorkspaceScreenContent({
   // tab is treated as the user's.
   //
   // `mode` is the preference as it stood when the tab was opened, so switching to untilSuccess
-  // later cannot retroactively make an already-open tab closeable. `visibleAtOpen` records
-  // whether the tab landed on screen straight away, which decides what its visibility proves
-  // later on: see the adopt check in the close effect.
+  // later cannot retroactively make an already-open tab closeable.
+  // `requiresSiblingsForAdoption` starts true for a tab that landed on screen by itself and turns
+  // false for good once the pane holds more than it: see the adopt check in the close effect.
   const autoOpenedSetupTabIdsRef = useRef<
-    Map<string, { tabId: string; mode: SetupTabAutoOpen; visibleAtOpen: boolean }>
+    Map<string, { tabId: string; mode: SetupTabAutoOpen; requiresSiblingsForAdoption: boolean }>
   >(new Map());
 
   useEffect(() => {
@@ -2330,12 +2331,15 @@ function WorkspaceScreenContent({
     if (!shouldAutoOpen) {
       return;
     }
-    const hasFailure = hasWorkspaceSetupFailure(workspaceSetupSnapshot);
     const alreadyOpened = autoOpenedSetupTabWorkspacesRef.current.get(persistenceKey);
-    // Never downgrade: once a failure has had its open, a later snapshot cannot earn another.
-    const forFailure = hasFailure || alreadyOpened?.forFailure === true;
     if (hasSetupTab) {
-      autoOpenedSetupTabWorkspacesRef.current.set(persistenceKey, { forFailure });
+      // A tab is already there, so nothing is opening now. Record the workspace as having had its
+      // shot, and carry `forFailure` forward untouched: a failure surfacing while some tab happens
+      // to exist has not spent the failure's reopen, because that tab may be sitting unread in the
+      // strip and about to be closed.
+      autoOpenedSetupTabWorkspacesRef.current.set(persistenceKey, {
+        forFailure: alreadyOpened?.forFailure === true,
+      });
       return;
     }
     if (!canAutoOpenSetupTabAgain({ snapshot: workspaceSetupSnapshot, alreadyOpened })) {
@@ -2355,7 +2359,11 @@ function WorkspaceScreenContent({
       return;
     }
 
-    autoOpenedSetupTabWorkspacesRef.current.set(persistenceKey, { forFailure });
+    // Never downgrade: once a failure has had its open, a later snapshot cannot earn another.
+    autoOpenedSetupTabWorkspacesRef.current.set(persistenceKey, {
+      forFailure:
+        hasWorkspaceSetupFailure(workspaceSetupSnapshot) || alreadyOpened?.forFailure === true,
+    });
     // Read through the store, not the rendered `workspaceLayout`: that snapshot predates the open
     // by a render, and whether the tab landed visible is only answerable after it.
     const layoutAfterOpen =
@@ -2363,7 +2371,7 @@ function WorkspaceScreenContent({
     autoOpenedSetupTabIdsRef.current.set(persistenceKey, {
       tabId,
       mode: setupTabAutoOpen,
-      visibleAtOpen: isTabVisibleInAnyPane(layoutAfterOpen, tabId),
+      requiresSiblingsForAdoption: isTabVisibleInAnyPane(layoutAfterOpen, tabId),
     });
   }, [
     hasSetupTab,
@@ -2385,11 +2393,17 @@ function WorkspaceScreenContent({
     if (!autoOpened) {
       return;
     }
-    // A tab that landed visible needs siblings before its visibility means anything - it would be
-    // its pane's visible tab either way. A tab opened behind others is the opposite: it is only on
-    // screen because the user put it there, whether by switching to it or by closing what covered
-    // it, so plain visibility is adoption.
-    const isAdopted = autoOpened.visibleAtOpen
+    // While the tab is its pane's only tab it is the visible one no matter what, so visibility says
+    // nothing and adoption needs a sibling it was chosen over. The moment the pane holds anything
+    // else that excuse is gone for good, and afterwards plain visibility is adoption: the tab is on
+    // screen because the user switched to it, or closed what was covering it.
+    const pane = workspaceLayout
+      ? findPaneContainingTab(workspaceLayout.root, autoOpened.tabId)
+      : null;
+    if (autoOpened.requiresSiblingsForAdoption && (pane?.tabIds.length ?? 0) > 1) {
+      autoOpened.requiresSiblingsForAdoption = false;
+    }
+    const isAdopted = autoOpened.requiresSiblingsForAdoption
       ? isTabFocusedAmongSiblings(workspaceLayout, autoOpened.tabId)
       : isTabVisibleInAnyPane(workspaceLayout, autoOpened.tabId);
     // Adopting forgets the tab: setup finishing later can't pull the log out from under whoever is
@@ -2399,8 +2413,10 @@ function WorkspaceScreenContent({
       return;
     }
     // The preference moved since this tab was opened, so the tab predates the policy now in force.
-    // Changing a setting does not close a tab that is already on screen.
+    // Forgetting it rather than waiting for a match means a round trip back to the opening mode
+    // cannot revive the claim: changing a setting never closes a tab that is already on screen.
     if (autoOpened.mode !== setupTabAutoOpen) {
+      autoOpenedSetupTabIdsRef.current.delete(persistenceKey);
       return;
     }
     const shouldAutoClose = shouldAutoCloseSetupTab({
