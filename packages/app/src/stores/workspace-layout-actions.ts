@@ -977,6 +977,27 @@ export function collectAllPanes(root: SplitNode): SplitPane[] {
   return internalRoot.group.children.flatMap((child) => collectAllPanes(child));
 }
 
+/**
+ * Whether the tab is on screen *because someone chose it*: it is the visible tab of its pane and
+ * that pane holds other tabs it could be showing instead. Any pane counts, not just the focused
+ * one — in a split, an unfocused pane's visible tab is still on screen.
+ *
+ * The sibling condition is what makes this a signal. A tab that is alone in its pane is always
+ * that pane's visible tab, even one opened in the background, so on its own visibility says
+ * nothing about intent. Used before closing a tab on the user's behalf.
+ */
+export function isTabFocusedAmongSiblings(
+  layout: WorkspaceLayout | null | undefined,
+  tabId: string,
+): boolean {
+  if (!layout || !tabId) {
+    return false;
+  }
+  return collectAllPanes(layout.root).some(
+    (pane) => pane.focusedTabId === tabId && pane.tabIds.length > 1,
+  );
+}
+
 function isEphemeralTab(tab: WorkspaceTab): boolean {
   // Commit diff tabs are ephemeral: their SHA may be rebased away before the next
   // load, so a restored tab could point at a dead commit.

@@ -1,27 +1,8 @@
 import { expect, type Page } from "@playwright/test";
-
-type WebSocketMessage = string | Buffer;
-
-interface SessionMessage {
-  type?: unknown;
-  payload?: unknown;
-}
+import { readSessionMessage } from "./session-frames";
 
 interface TimelineSubscriptionWaitOptions {
   timeout?: number;
-}
-
-function readSessionMessage(message: WebSocketMessage): SessionMessage | null {
-  if (typeof message !== "string") return null;
-  try {
-    const envelope = JSON.parse(message) as {
-      type?: unknown;
-      message?: SessionMessage;
-    };
-    return envelope.type === "session" ? (envelope.message ?? null) : envelope;
-  } catch {
-    return null;
-  }
 }
 
 export function observeTimelineSubscriptions(page: Page) {

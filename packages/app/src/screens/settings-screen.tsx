@@ -56,6 +56,7 @@ import {
   type AppSettings,
   type SendBehavior,
   type ServiceUrlBehavior,
+  type SetupTabAutoOpen,
   type Settings as EffectiveSettings,
 } from "@/hooks/use-settings";
 import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
@@ -280,6 +281,35 @@ interface GeneralSectionProps {
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
+  handleSetupTabAutoOpenChange: (value: SetupTabAutoOpen) => void;
+}
+
+const SETUP_TAB_AUTO_OPEN_VALUES: readonly SetupTabAutoOpen[] = [
+  "always",
+  "untilSuccess",
+  "onFailure",
+];
+
+function getSetupTabAutoOpenLabel(t: TFunction, value: SetupTabAutoOpen): string {
+  return t(`settings.general.setupTab.options.${value}`);
+}
+
+interface SetupTabAutoOpenMenuItemProps {
+  value: SetupTabAutoOpen;
+  selected: boolean;
+  onChange: (value: SetupTabAutoOpen) => void;
+}
+
+function SetupTabAutoOpenMenuItem({ value, selected, onChange }: SetupTabAutoOpenMenuItemProps) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => {
+    onChange(value);
+  }, [onChange, value]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {getSetupTabAutoOpenLabel(t, value)}
+    </DropdownMenuItem>
+  );
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -336,6 +366,7 @@ function GeneralSection({
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
+  handleSetupTabAutoOpenChange,
 }: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
@@ -415,6 +446,36 @@ function GeneralSection({
                   activeLocale={activeLocale}
                   selected={settings.language === option.value}
                   onChange={handleLanguageChange}
+                />
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </View>
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{t("settings.general.setupTab.label")}</Text>
+            <Text style={settingsStyles.rowHint}>{t("settings.general.setupTab.description")}</Text>
+          </View>
+          <DropdownMenu>
+            <DropdownTrigger
+              accessibilityRole="button"
+              accessibilityLabel={t("settings.general.setupTab.accessibilityLabel", {
+                value: getSetupTabAutoOpenLabel(t, settings.setupTabAutoOpen),
+              })}
+              style={themeTriggerStyle}
+              testID="setup-tab-auto-open-trigger"
+            >
+              <Text style={styles.themeTriggerText}>
+                {getSetupTabAutoOpenLabel(t, settings.setupTabAutoOpen)}
+              </Text>
+            </DropdownTrigger>
+            <DropdownMenuContent side="bottom" align="end" width={260}>
+              {SETUP_TAB_AUTO_OPEN_VALUES.map((option) => (
+                <SetupTabAutoOpenMenuItem
+                  key={option}
+                  value={option}
+                  selected={settings.setupTabAutoOpen === option}
+                  onChange={handleSetupTabAutoOpenChange}
                 />
               ))}
             </DropdownMenuContent>
@@ -1215,6 +1276,13 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
+  const handleSetupTabAutoOpenChange = useCallback(
+    (setupTabAutoOpen: SetupTabAutoOpen) => {
+      void updateSettings({ setupTabAutoOpen });
+    },
+    [updateSettings],
+  );
+
   const handleUseLegacyTerminalRendererChange = useCallback(
     (useLegacyTerminalRenderer: boolean) => {
       void updateSettings({ useLegacyTerminalRenderer });
@@ -1433,6 +1501,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                 handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
                 handleLanguageChange={handleLanguageChange}
                 handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+                handleSetupTabAutoOpenChange={handleSetupTabAutoOpenChange}
               />
               {isDesktopApp ? <BrowserDataSection /> : null}
             </>

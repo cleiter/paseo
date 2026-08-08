@@ -17,6 +17,7 @@ import {
   connectWorkspaceSetupClient,
   createWorkspaceThroughDaemon,
   expectSetupPanel,
+  expectSetupTab,
   openHomeWithProject,
   navigateToWorkspaceViaSidebar,
   openWorkspaceScriptsMenu,
@@ -60,6 +61,9 @@ test.describe("Workspace setup streaming", () => {
       await openHomeWithProject(page, repo.path);
       await navigateToWorkspaceViaSidebar(page, workspace.id);
 
+      // Assert the tab first: expectSetupPanel falls back to opening the panel
+      // from the header menu, so on its own it cannot prove auto-open happened.
+      await expectSetupTab(page, workspace.id);
       await expectSetupPanel(page);
     } finally {
       await client.close();

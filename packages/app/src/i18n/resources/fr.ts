@@ -1906,6 +1906,16 @@ export const fr: TranslationResources = {
           detailed: "Détails complets",
         },
       },
+      setupTab: {
+        label: "Onglet de configuration",
+        description: "Quand ouvrir l’onglet de configuration d’un nouveau workspace",
+        accessibilityLabel: "Sélectionner quand ouvrir l’onglet de configuration ({{value}})",
+        options: {
+          always: "Toujours",
+          untilSuccess: "Jusqu’à la réussite de la configuration",
+          onFailure: "Uniquement en cas d’échec",
+        },
+      },
       language: {
         label: "Langue",
         description: "Langue de l'application",

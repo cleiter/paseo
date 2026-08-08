@@ -1835,6 +1835,16 @@ export const zhCN: TranslationResources = {
           detailed: "完整详情",
         },
       },
+      setupTab: {
+        label: "Setup 标签页",
+        description: "何时为新 workspace 打开 Setup 标签页",
+        accessibilityLabel: "选择何时打开 Setup 标签页（{{value}}）",
+        options: {
+          always: "始终",
+          untilSuccess: "直到 setup 成功",
+          onFailure: "仅在 setup 失败时",
+        },
+      },
       language: {
         label: "语言",
         description: "应用语言",

@@ -1,10 +1,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  hasWorkspaceSetupFailure,
+  shouldAutoCloseSetupTab,
+  shouldAutoOpenSetupTab,
   shouldShowWorkspaceSetup,
   useWorkspaceSetupStore,
+  WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS,
+  type WorkspaceSetupSnapshot,
   type WorkspaceSetupStatusClient,
   type WorkspaceSetupStatusResult,
 } from "./workspace-setup-store";
+
+type CommandStatus = WorkspaceSetupSnapshot["detail"]["commands"][number]["status"];
 
 const DEFAULT_SNAPSHOT: WorkspaceSetupStatusResult["snapshot"] = {
   status: "running",
@@ -311,5 +318,281 @@ describe("workspace-setup-store", () => {
     await flush();
 
     expect(calls).toEqual(["42", "42"]);
+  });
+});
+
+const NOW = 1_700_000_000_000;
+
+function makeSnapshot(input: {
+  status: WorkspaceSetupSnapshot["status"];
+  commandStatuses?: CommandStatus[];
+  error?: string | null;
+  updatedAt?: number;
+}): WorkspaceSetupSnapshot {
+  const commandStatuses = input.commandStatuses ?? ["completed"];
+  const exitCodeFor = (status: CommandStatus): number | null => {
+    if (status === "failed") return 1;
+    if (status === "completed") return 0;
+    return null;
+  };
+  return {
+    workspaceId: "workspace-1",
+    status: input.status,
+    detail: {
+      type: "worktree_setup",
+      worktreePath: "/Users/test/project",
+      branchName: "main",
+      log: "",
+      commands: commandStatuses.map((status, index) => ({
+        index: index + 1,
+        command: "npm install",
+        cwd: "/Users/test/project",
+        log: "",
+        status,
+        exitCode: exitCodeFor(status),
+      })),
+    },
+    error: input.error ?? null,
+    updatedAt: input.updatedAt ?? NOW,
+  };
+}
+
+describe("hasWorkspaceSetupFailure", () => {
+  it("is false without a snapshot", () => {
+    expect(hasWorkspaceSetupFailure(null)).toBe(false);
+  });
+
+  it("is false while setup is running cleanly", () => {
+    expect(hasWorkspaceSetupFailure(makeSnapshot({ status: "running" }))).toBe(false);
+  });
+
+  it("is false for a clean completed run", () => {
+    expect(hasWorkspaceSetupFailure(makeSnapshot({ status: "completed" }))).toBe(false);
+  });
+
+  it("is true when the run failed", () => {
+    expect(hasWorkspaceSetupFailure(makeSnapshot({ status: "failed", error: "boom" }))).toBe(true);
+  });
+
+  it("is true when a command failed before the run was marked failed", () => {
+    expect(
+      hasWorkspaceSetupFailure(
+        makeSnapshot({ status: "running", commandStatuses: ["completed", "failed"] }),
+      ),
+    ).toBe(true);
+  });
+
+  it("is true when a completed run contains a failed command", () => {
+    expect(
+      hasWorkspaceSetupFailure(makeSnapshot({ status: "completed", commandStatuses: ["failed"] })),
+    ).toBe(true);
+  });
+});
+
+describe("shouldAutoOpenSetupTab", () => {
+  const stale = NOW - WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS - 1;
+
+  it("never opens without a snapshot", () => {
+    for (const mode of ["always", "untilSuccess", "onFailure"] as const) {
+      expect(shouldAutoOpenSetupTab({ snapshot: null, mode, now: NOW })).toBe(false);
+    }
+  });
+
+  it("never opens for a snapshot with nothing to show", () => {
+    const empty = makeSnapshot({ status: "completed", commandStatuses: [] });
+    for (const mode of ["always", "untilSuccess", "onFailure"] as const) {
+      expect(shouldAutoOpenSetupTab({ snapshot: empty, mode, now: NOW })).toBe(false);
+    }
+  });
+
+  describe("always", () => {
+    it("opens while setup is running, however old the snapshot looks", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "running", updatedAt: stale }),
+          mode: "always",
+          now: NOW,
+        }),
+      ).toBe(true);
+    });
+
+    it("opens for a fresh completed run", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "completed" }),
+          mode: "always",
+          now: NOW,
+        }),
+      ).toBe(true);
+    });
+
+    it("opens for a fresh failed run", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "failed", error: "boom" }),
+          mode: "always",
+          now: NOW,
+        }),
+      ).toBe(true);
+    });
+
+    it("does not open for a stale completed run", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "completed", updatedAt: stale }),
+          mode: "always",
+          now: NOW,
+        }),
+      ).toBe(false);
+    });
+
+    it("does not open for a stale failed run", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "failed", error: "boom", updatedAt: stale }),
+          mode: "always",
+          now: NOW,
+        }),
+      ).toBe(false);
+    });
+  });
+
+  describe("onFailure", () => {
+    it("does not open while setup is running cleanly", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "running" }),
+          mode: "onFailure",
+          now: NOW,
+        }),
+      ).toBe(false);
+    });
+
+    it("does not open for a clean completed run", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "completed" }),
+          mode: "onFailure",
+          now: NOW,
+        }),
+      ).toBe(false);
+    });
+
+    it("opens as soon as a command fails, before the run is marked failed", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "running", commandStatuses: ["failed"] }),
+          mode: "onFailure",
+          now: NOW,
+        }),
+      ).toBe(true);
+    });
+
+    it("opens for a failed run no matter how stale the snapshot looks", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "failed", error: "boom", updatedAt: stale }),
+          mode: "onFailure",
+          now: NOW,
+        }),
+      ).toBe(true);
+    });
+  });
+
+  describe("untilSuccess", () => {
+    it("opens while setup is running", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "running", updatedAt: stale }),
+          mode: "untilSuccess",
+          now: NOW,
+        }),
+      ).toBe(true);
+    });
+
+    it("opens for a failed run however stale the snapshot looks", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "failed", error: "boom", updatedAt: stale }),
+          mode: "untilSuccess",
+          now: NOW,
+        }),
+      ).toBe(true);
+    });
+
+    it("does not open for a clean completed run", () => {
+      expect(
+        shouldAutoOpenSetupTab({
+          snapshot: makeSnapshot({ status: "completed" }),
+          mode: "untilSuccess",
+          now: NOW,
+        }),
+      ).toBe(false);
+    });
+  });
+
+  it("opens for a failed run in every mode", () => {
+    const failed = makeSnapshot({ status: "failed", error: "boom", updatedAt: NOW });
+    for (const mode of ["always", "untilSuccess", "onFailure"] as const) {
+      expect(shouldAutoOpenSetupTab({ snapshot: failed, mode, now: NOW })).toBe(true);
+    }
+  });
+});
+
+describe("shouldAutoCloseSetupTab", () => {
+  const completed = makeSnapshot({ status: "completed" });
+
+  it("closes an unadopted tab once setup succeeds", () => {
+    expect(
+      shouldAutoCloseSetupTab({ snapshot: completed, mode: "untilSuccess", isAdopted: false }),
+    ).toBe(true);
+  });
+
+  it("keeps an adopted tab open", () => {
+    expect(
+      shouldAutoCloseSetupTab({ snapshot: completed, mode: "untilSuccess", isAdopted: true }),
+    ).toBe(false);
+  });
+
+  it("keeps the tab open while setup is still running", () => {
+    expect(
+      shouldAutoCloseSetupTab({
+        snapshot: makeSnapshot({ status: "running" }),
+        mode: "untilSuccess",
+        isAdopted: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the tab open for a failed run", () => {
+    expect(
+      shouldAutoCloseSetupTab({
+        snapshot: makeSnapshot({ status: "failed", error: "boom" }),
+        mode: "untilSuccess",
+        isAdopted: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the tab open when a completed run contains a failed command", () => {
+    expect(
+      shouldAutoCloseSetupTab({
+        snapshot: makeSnapshot({ status: "completed", commandStatuses: ["failed"] }),
+        mode: "untilSuccess",
+        isAdopted: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("closes nothing in the other modes", () => {
+    for (const mode of ["always", "onFailure"] as const) {
+      expect(shouldAutoCloseSetupTab({ snapshot: completed, mode, isAdopted: false })).toBe(false);
+    }
+  });
+
+  it("closes nothing without a snapshot", () => {
+    expect(
+      shouldAutoCloseSetupTab({ snapshot: null, mode: "untilSuccess", isAdopted: false }),
+    ).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
+import type { SetupTabAutoOpen } from "@/hooks/use-settings";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 export type WorkspaceCreationMethod = "open_project" | "create_worktree";
@@ -35,6 +36,78 @@ export function shouldShowWorkspaceSetup(snapshot: WorkspaceSetupSnapshot | null
     return false;
   }
   return snapshot.error !== null || snapshot.detail.commands.length > 0;
+}
+
+/**
+ * How long after a snapshot arrives its workspace still counts as "just set up".
+ *
+ * Measured from `updatedAt`, which `upsertProgress` stamps on receipt — so this is time since
+ * this client learned about the run, not since the run happened. Fetching a status for the
+ * first time therefore looks fresh even for an old workspace.
+ */
+export const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
+
+/**
+ * Whether setup went wrong. The run status is the authoritative signal — the server aborts on
+ * the first non-zero exit — but the commands are scanned too, so a failure is caught in the
+ * window before the run is marked failed, and if setup ever gains non-fatal commands.
+ */
+export function hasWorkspaceSetupFailure(snapshot: WorkspaceSetupSnapshot | null): boolean {
+  if (!snapshot) {
+    return false;
+  }
+  return (
+    snapshot.status === "failed" ||
+    snapshot.detail.commands.some((command) => command.status === "failed")
+  );
+}
+
+/**
+ * Whether a focused workspace should get its Setup tab opened in the background.
+ *
+ * Every mode opens on failure — the Setup tab is the only place a failed setup shows up, so no
+ * mode may hide one. Only `always` consults the freshness window; the other two answer from the
+ * run itself, which is why `updatedAt` being receipt time can't mislead them.
+ */
+export function shouldAutoOpenSetupTab(input: {
+  snapshot: WorkspaceSetupSnapshot | null;
+  mode: SetupTabAutoOpen;
+  now: number;
+}): boolean {
+  const { snapshot, mode, now } = input;
+  if (!shouldShowWorkspaceSetup(snapshot) || !snapshot) {
+    return false;
+  }
+  if (mode === "onFailure") {
+    return hasWorkspaceSetupFailure(snapshot);
+  }
+  if (mode === "untilSuccess") {
+    return snapshot.status === "running" || hasWorkspaceSetupFailure(snapshot);
+  }
+  const isFresh = now - snapshot.updatedAt <= WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS;
+  return snapshot.status === "running" || isFresh;
+}
+
+/**
+ * Whether an auto-opened Setup tab has outlived its purpose and should close itself.
+ *
+ * Only `untilSuccess` closes anything, and only on a clean finish — a failed run keeps the tab.
+ * `isAdopted` is the caller's answer to "did someone choose to look at this tab": an adopted tab
+ * belongs to whoever focused it, and closing it would pull content out from under them.
+ *
+ * The caller also has to confirm it opened the tab itself. A tab opened from **Show Setup** is
+ * the user's and is never closed on their behalf.
+ */
+export function shouldAutoCloseSetupTab(input: {
+  snapshot: WorkspaceSetupSnapshot | null;
+  mode: SetupTabAutoOpen;
+  isAdopted: boolean;
+}): boolean {
+  const { snapshot, mode, isAdopted } = input;
+  if (mode !== "untilSuccess" || isAdopted || !snapshot) {
+    return false;
+  }
+  return snapshot.status === "completed" && !hasWorkspaceSetupFailure(snapshot);
 }
 
 interface WorkspaceSetupStoreState {

@@ -1904,6 +1904,16 @@ export const es: TranslationResources = {
           detailed: "Detalle completo",
         },
       },
+      setupTab: {
+        label: "Pestaña de configuración",
+        description: "Cuándo abrir la pestaña de configuración de un nuevo workspace",
+        accessibilityLabel: "Seleccionar cuándo abrir la pestaña de configuración ({{value}})",
+        options: {
+          always: "Siempre",
+          untilSuccess: "Hasta que la configuración tenga éxito",
+          onFailure: "Solo si la configuración falla",
+        },
+      },
       language: {
         label: "Idioma",
         description: "Idioma de la aplicación",

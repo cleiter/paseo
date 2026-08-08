@@ -1892,6 +1892,16 @@ export const ru: TranslationResources = {
           detailed: "Полная детализация",
         },
       },
+      setupTab: {
+        label: "Вкладка настройки",
+        description: "Когда открывать вкладку настройки для нового workspace",
+        accessibilityLabel: "Выберите, когда открывать вкладку настройки ({{value}})",
+        options: {
+          always: "Всегда",
+          untilSuccess: "Пока настройка не завершится успешно",
+          onFailure: "Только при сбое настройки",
+        },
+      },
       language: {
         label: "Язык",
         description: "Язык приложения",

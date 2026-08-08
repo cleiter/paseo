@@ -7,6 +7,7 @@ import { connectDaemonClient } from "./daemon-client-loader";
 import { getServerId } from "./server-id";
 import { withProjectOwnership } from "./project-ownership";
 import { switchWorkspaceViaSidebar } from "./workspace-ui";
+import { readSessionMessage } from "./session-frames";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 type WorkspaceSetupDaemonClient = Pick<
@@ -181,6 +182,98 @@ export async function expectSetupPanel(page: Page): Promise<void> {
   await expect(showSetup).toBeVisible({ timeout: 5_000 });
   await showSetup.click();
   await expect(panel).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * The Setup entry in the workspace tab strip. Unlike {@link expectSetupPanel},
+ * asserting on this tab can tell auto-open apart from a manual open: auto-open
+ * opens the tab in the background, so the panel is never visible.
+ */
+export function setupTabTestId(workspaceId: string): string {
+  return `workspace-tab-setup_${workspaceId}`;
+}
+
+export async function expectSetupTab(page: Page, workspaceId: string): Promise<void> {
+  await expect(page.getByTestId(setupTabTestId(workspaceId)).first()).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
+export async function expectNoSetupTab(
+  page: Page,
+  workspaceId: string,
+  options: { timeout?: number } = {},
+): Promise<void> {
+  await expect(page.getByTestId(setupTabTestId(workspaceId))).toHaveCount(0, {
+    timeout: options.timeout,
+  });
+}
+
+/**
+ * Synchronization point for "the Setup tab never opened" assertions: watches the
+ * app's own daemon socket and resolves once a setup snapshot for the workspace
+ * has demonstrably reached the client. Without it, an absent tab can just mean
+ * the app had not got there yet.
+ *
+ * Call this before the page navigates — the listener has to be attached first.
+ */
+export function observeWorkspaceSetupSnapshots(page: Page) {
+  const workspacesWithSnapshot = new Set<string>();
+  const statusByWorkspaceId = new Map<string, string>();
+
+  page.on("websocket", (socket) => {
+    socket.on("framereceived", ({ payload }) => {
+      const message = readSessionMessage(payload);
+      if (
+        message?.type !== "workspace_setup_status_response" &&
+        message?.type !== "workspace_setup_progress"
+      ) {
+        return;
+      }
+      const body = message.payload as
+        | { workspaceId?: unknown; snapshot?: unknown; status?: unknown }
+        | null
+        | undefined;
+      if (typeof body?.workspaceId !== "string") return;
+      // A progress frame is itself the snapshot; a status response carries
+      // snapshot: null when the daemon has nothing for that workspace.
+      if (message.type === "workspace_setup_status_response" && !body.snapshot) return;
+      workspacesWithSnapshot.add(body.workspaceId);
+      const snapshot =
+        message.type === "workspace_setup_progress"
+          ? body
+          : (body.snapshot as { status?: unknown } | null);
+      if (typeof snapshot?.status === "string") {
+        statusByWorkspaceId.set(body.workspaceId, snapshot.status);
+      }
+    });
+  });
+
+  return {
+    async waitForSnapshotDelivered(
+      workspaceId: string,
+      options: { timeout?: number } = {},
+    ): Promise<void> {
+      await expect
+        .poll(() => workspacesWithSnapshot.has(workspaceId), {
+          timeout: options.timeout ?? 30_000,
+        })
+        .toBe(true);
+    },
+
+    /** Wait until the app has been told the run reached `status` (`running` | `completed` | `failed`). */
+    async waitForSnapshotStatus(
+      workspaceId: string,
+      status: "running" | "completed" | "failed",
+      options: { timeout?: number } = {},
+    ): Promise<void> {
+      await expect
+        .poll(() => statusByWorkspaceId.get(workspaceId) ?? null, {
+          timeout: options.timeout ?? 30_000,
+        })
+        .toBe(status);
+    },
+  };
 }
 
 export async function expectSetupStatus(

@@ -91,6 +91,62 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(true);
   });
 
+  it("auto-opens the setup tab by default", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.setupTabAutoOpen).toBe("always");
+  });
+
+  it("loads a stored setup tab preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ setupTabAutoOpen: "onFailure" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.setupTabAutoOpen).toBe("onFailure");
+  });
+
+  it("loads the until-success setup tab preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ setupTabAutoOpen: "untilSuccess" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.setupTabAutoOpen).toBe("untilSuccess");
+  });
+
+  it("falls back to always for an unknown setup tab preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ setupTabAutoOpen: "sometimes" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.setupTabAutoOpen).toBe("always");
+  });
+
+  it("falls back to always for a non-string setup tab preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ setupTabAutoOpen: false }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.setupTabAutoOpen).toBe("always");
+  });
+
   it("loads a disabled chat outline preference", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

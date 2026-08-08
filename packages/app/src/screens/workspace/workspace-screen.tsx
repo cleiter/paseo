@@ -75,6 +75,7 @@ import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-stor
 import {
   collectAllTabs,
   getFocusedBrowserId,
+  isTabFocusedAmongSiblings,
   type WorkspaceLayout,
   useWorkspaceLayoutStore,
   useWorkspaceLayoutStoreHydrated,
@@ -101,7 +102,12 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { shouldShowWorkspaceSetup, useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
+import {
+  shouldAutoCloseSetupTab,
+  shouldAutoOpenSetupTab,
+  shouldShowWorkspaceSetup,
+  useWorkspaceSetupStore,
+} from "@/stores/workspace-setup-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
@@ -190,6 +196,7 @@ import {
   type TerminalProfileInput,
 } from "@/screens/workspace/terminals/use-workspace-terminals";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useAppSettings } from "@/hooks/use-settings";
 import {
   resolveTerminalProfileLaunch,
   getTerminalProfileIcon,
@@ -205,7 +212,6 @@ import {
 import { RenderProfile } from "@/utils/render-profiler";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
 
-const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
@@ -1969,6 +1975,10 @@ function WorkspaceScreenContent({
   );
   const ensureWorkspaceSetupStatus = useWorkspaceSetupStore((state) => state.ensureSetupStatus);
   const showWorkspaceSetup = shouldShowWorkspaceSetup(workspaceSetupSnapshot);
+  // The object form, not useSettings(selector): the selector calls useAppSettings() internally,
+  // so it subscribes to the same query and saves no renders, but it hides isLoading.
+  const { settings: appSettings, isLoading: settingsLoading } = useAppSettings();
+  const setupTabAutoOpen = appSettings.setupTabAutoOpen;
   const uiTabs = useMemo(
     () => (workspaceLayout ? collectAllTabs(workspaceLayout.root) : EMPTY_UI_TABS),
     [workspaceLayout],
@@ -2214,7 +2224,15 @@ function WorkspaceScreenContent({
   );
 
   const emptyWorkspaceSeedRef = useRef<string | null>(null);
-  const autoOpenedSetupTabWorkspaceRef = useRef<string | null>(null);
+  // Keyed by workspace, not a single value: the screen is reused across workspaces, and a
+  // single slot would forget workspace A on a visit to B and reopen a Setup tab you closed.
+  // Membership means "this workspace has had its shot", including tabs opened from Show Setup,
+  // so a closed Setup tab stays closed.
+  const autoOpenedSetupTabWorkspacesRef = useRef<Set<string>>(new Set());
+  // Narrower: only tabs this screen opened by itself, and therefore the only ones it may close
+  // again. Deliberately in-memory — after a reload nothing here is ours, and a restored Setup
+  // tab is treated as the user's.
+  const autoOpenedSetupTabIdsRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (!isRouteFocused || !client || !normalizedServerId || !normalizedWorkspaceId) {
@@ -2272,6 +2290,11 @@ function WorkspaceScreenContent({
   ]);
 
   useEffect(() => {
+    // Settings load from AsyncStorage, and until they land every consumer sees the defaults —
+    // acting on them here would auto-open a tab the stored preference says to leave alone.
+    if (settingsLoading) {
+      return;
+    }
     if (!isRouteFocused) {
       return;
     }
@@ -2279,24 +2302,24 @@ function WorkspaceScreenContent({
       return;
     }
     if (!workspaceSetupSnapshot || !showWorkspaceSetup) {
-      if (autoOpenedSetupTabWorkspaceRef.current === persistenceKey) {
-        autoOpenedSetupTabWorkspaceRef.current = null;
-      }
+      autoOpenedSetupTabWorkspacesRef.current.delete(persistenceKey);
+      autoOpenedSetupTabIdsRef.current.delete(persistenceKey);
       return;
     }
 
-    const snapshotAge = Date.now() - workspaceSetupSnapshot.updatedAt;
-    const shouldAutoOpen =
-      workspaceSetupSnapshot.status === "running" ||
-      snapshotAge <= WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS;
+    const shouldAutoOpen = shouldAutoOpenSetupTab({
+      snapshot: workspaceSetupSnapshot,
+      mode: setupTabAutoOpen,
+      now: Date.now(),
+    });
     if (!shouldAutoOpen) {
       return;
     }
     if (hasSetupTab) {
-      autoOpenedSetupTabWorkspaceRef.current = persistenceKey;
+      autoOpenedSetupTabWorkspacesRef.current.add(persistenceKey);
       return;
     }
-    if (autoOpenedSetupTabWorkspaceRef.current === persistenceKey) {
+    if (autoOpenedSetupTabWorkspacesRef.current.has(persistenceKey)) {
       return;
     }
 
@@ -2313,14 +2336,55 @@ function WorkspaceScreenContent({
       return;
     }
 
-    autoOpenedSetupTabWorkspaceRef.current = persistenceKey;
+    autoOpenedSetupTabWorkspacesRef.current.add(persistenceKey);
+    autoOpenedSetupTabIdsRef.current.set(persistenceKey, tabId);
   }, [
     hasSetupTab,
     isRouteFocused,
     normalizedWorkspaceId,
     openWorkspaceTabInBackground,
     persistenceKey,
+    settingsLoading,
+    setupTabAutoOpen,
     showWorkspaceSetup,
+    workspaceSetupSnapshot,
+  ]);
+
+  useEffect(() => {
+    if (settingsLoading || !isRouteFocused || !persistenceKey) {
+      return;
+    }
+    const autoOpenedTabId = autoOpenedSetupTabIdsRef.current.get(persistenceKey);
+    if (!autoOpenedTabId) {
+      return;
+    }
+    const isAdopted = isTabFocusedAmongSiblings(workspaceLayout, autoOpenedTabId);
+    // Switching to the tab adopts it: forget it opened the tab so setup finishing later can't
+    // pull the log out from under whoever is reading it, now or on a subsequent visit.
+    if (isAdopted) {
+      autoOpenedSetupTabIdsRef.current.delete(persistenceKey);
+      return;
+    }
+    const shouldAutoClose = shouldAutoCloseSetupTab({
+      snapshot: workspaceSetupSnapshot,
+      mode: setupTabAutoOpen,
+      isAdopted,
+    });
+    if (!shouldAutoClose) {
+      return;
+    }
+
+    closeWorkspaceTab(persistenceKey, autoOpenedTabId);
+    // Only the id map is cleared. The workspace stays in the auto-opened set, so the open effect
+    // does not immediately reopen what this just closed.
+    autoOpenedSetupTabIdsRef.current.delete(persistenceKey);
+  }, [
+    closeWorkspaceTab,
+    isRouteFocused,
+    persistenceKey,
+    settingsLoading,
+    setupTabAutoOpen,
+    workspaceLayout,
     workspaceSetupSnapshot,
   ]);
 

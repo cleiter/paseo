@@ -1857,6 +1857,16 @@ export const ar: TranslationResources = {
           detailed: "التفاصيل الكاملة",
         },
       },
+      setupTab: {
+        label: "علامة تبويب الإعداد",
+        description: "متى تُفتح علامة تبويب الإعداد لمساحة عمل جديدة",
+        accessibilityLabel: "حدد وقت فتح علامة تبويب الإعداد ({{value}})",
+        options: {
+          always: "دائمًا",
+          untilSuccess: "حتى ينجح الإعداد",
+          onFailure: "عند فشل الإعداد فقط",
+        },
+      },
       language: {
         label: "لغة",
         description: "لغة التطبيق",

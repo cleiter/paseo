@@ -28,6 +28,14 @@ export type WorkspaceTitleSource = "title" | "branch";
 /** What a sidebar workspace row shows in the space to the right of its title. */
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 export type ToolCallDetailLevel = "overview" | "detailed";
+/**
+ * How much of a new workspace's setup run the Setup tab shows.
+ *
+ * A scale of success-noise, not an on/off switch: every mode opens the tab when setup fails,
+ * because the tab is the only place a failed setup is visible. "Show Setup" stays available
+ * in every mode.
+ */
+export type SetupTabAutoOpen = "always" | "untilSuccess" | "onFailure";
 
 const VALID_THEMES = new Set<string>(THEME_OPTIONS.map((option) => option.name));
 const ThemePreferenceSchema = z.enum(THEME_OPTIONS.map((option) => option.name));
@@ -39,6 +47,11 @@ const VALID_SIDEBAR_WORKSPACE_TRAILINGS = new Set<SidebarWorkspaceTrailing>([
   "none",
 ]);
 const VALID_TOOL_CALL_DETAIL_LEVELS = new Set<ToolCallDetailLevel>(["overview", "detailed"]);
+const VALID_SETUP_TAB_AUTO_OPEN = new Set<SetupTabAutoOpen>([
+  "always",
+  "untilSuccess",
+  "onFailure",
+]);
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
@@ -70,6 +83,7 @@ export interface AppSettings {
   toolCallDetailLevel: ToolCallDetailLevel;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
+  setupTabAutoOpen: SetupTabAutoOpen;
 }
 
 export interface Settings extends AppSettings {
@@ -137,6 +151,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   toolCallDetailLevel: "detailed",
   chatOutlineEnabled: true,
   vimKeybindings: false,
+  setupTabAutoOpen: "always",
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -317,6 +332,12 @@ function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
     VALID_SIDEBAR_WORKSPACE_TRAILINGS.has(stored.sidebarWorkspaceTrailing)
   ) {
     result.sidebarWorkspaceTrailing = stored.sidebarWorkspaceTrailing;
+  }
+  if (
+    typeof stored.setupTabAutoOpen === "string" &&
+    VALID_SETUP_TAB_AUTO_OPEN.has(stored.setupTabAutoOpen)
+  ) {
+    result.setupTabAutoOpen = stored.setupTabAutoOpen;
   }
   return result;
 }

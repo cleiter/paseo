@@ -1872,6 +1872,16 @@ export const ja: TranslationResources = {
           detailed: "すべての詳細",
         },
       },
+      setupTab: {
+        label: "セットアップタブ",
+        description: "新しいワークスペースでセットアップタブを開くタイミング",
+        accessibilityLabel: "セットアップタブを開くタイミングを選択（{{value}}）",
+        options: {
+          always: "常に開く",
+          untilSuccess: "成功するまで",
+          onFailure: "失敗したときのみ",
+        },
+      },
       language: {
         label: "言語",
         description: "アプリの言語",

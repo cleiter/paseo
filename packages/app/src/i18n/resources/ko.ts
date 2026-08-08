@@ -1868,6 +1868,16 @@ export const ko: TranslationResources = {
           detailed: "전체 세부정보",
         },
       },
+      setupTab: {
+        label: "설정 탭",
+        description: "새 워크스페이스에서 설정 탭을 여는 시점",
+        accessibilityLabel: "설정 탭을 여는 시점 선택({{value}})",
+        options: {
+          always: "항상",
+          untilSuccess: "성공할 때까지",
+          onFailure: "설정 실패 시에만",
+        },
+      },
       language: {
         label: "언어",
         description: "앱 언어",

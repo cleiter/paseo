@@ -27,6 +27,7 @@ import {
   getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
+  isTabFocusedAmongSiblings,
   normalizeLayout,
   removePaneFromTree,
   removeTabFromTree,
@@ -199,6 +200,32 @@ describe("workspace-layout-store helpers", () => {
     });
 
     expect(getFocusedBrowserId({ root, focusedPaneId: "main" })).toBeNull();
+  });
+
+  it("treats a chosen tab in any pane as adopted, but not a tab alone in its pane", () => {
+    const root: SplitNode = {
+      kind: "group",
+      group: {
+        id: "group-root",
+        direction: "horizontal",
+        sizes: [0.5, 0.5],
+        children: [
+          createPane({ id: "left", tabIds: ["tab-a", "tab-b"], focusedTabId: "tab-a" }),
+          createPane({ id: "right", tabIds: ["tab-c", "tab-d"], focusedTabId: "tab-c" }),
+          createPane({ id: "lonely", tabIds: ["tab-e"], focusedTabId: "tab-e" }),
+        ],
+      },
+    };
+    const layout = { root, focusedPaneId: "left" };
+
+    expect(isTabFocusedAmongSiblings(layout, "tab-a")).toBe(true);
+    // Visible in an unfocused pane still counts.
+    expect(isTabFocusedAmongSiblings(layout, "tab-c")).toBe(true);
+    expect(isTabFocusedAmongSiblings(layout, "tab-b")).toBe(false);
+    expect(isTabFocusedAmongSiblings(layout, "tab-d")).toBe(false);
+    // Alone in its pane: visible by default, so it proves nothing about intent.
+    expect(isTabFocusedAmongSiblings(layout, "tab-e")).toBe(false);
+    expect(isTabFocusedAmongSiblings(null, "tab-a")).toBe(false);
   });
 });
 

@@ -1912,6 +1912,16 @@ export const en = {
           detailed: "Full detail",
         },
       },
+      setupTab: {
+        label: "Setup tab",
+        description: "When to open the Setup tab for a new workspace",
+        accessibilityLabel: "Select when to open the Setup tab ({{value}})",
+        options: {
+          always: "Always",
+          untilSuccess: "Until setup succeeds",
+          onFailure: "Only when setup fails",
+        },
+      },
       language: {
         label: "Language",
         description: "App language",

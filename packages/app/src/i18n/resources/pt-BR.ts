@@ -1888,6 +1888,16 @@ export const ptBR: TranslationResources = {
           detailed: "Detalhes completos",
         },
       },
+      setupTab: {
+        label: "Aba de configuração",
+        description: "Quando abrir a aba de configuração de um novo workspace",
+        accessibilityLabel: "Selecionar quando abrir a aba de configuração ({{value}})",
+        options: {
+          always: "Sempre",
+          untilSuccess: "Até a configuração ter êxito",
+          onFailure: "Apenas quando a configuração falhar",
+        },
+      },
       language: {
         label: "Idioma",
         description: "Idioma do app",
