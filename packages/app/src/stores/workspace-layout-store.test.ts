@@ -28,6 +28,7 @@ import {
   getTreeDepth,
   insertSplit,
   isTabFocusedAmongSiblings,
+  isTabVisibleInAnyPane,
   normalizeLayout,
   removePaneFromTree,
   removeTabFromTree,
@@ -226,6 +227,29 @@ describe("workspace-layout-store helpers", () => {
     // Alone in its pane: visible by default, so it proves nothing about intent.
     expect(isTabFocusedAmongSiblings(layout, "tab-e")).toBe(false);
     expect(isTabFocusedAmongSiblings(null, "tab-a")).toBe(false);
+  });
+
+  it("reports the visible tab of any pane, siblings or not", () => {
+    const root: SplitNode = {
+      kind: "group",
+      group: {
+        id: "group-root",
+        direction: "horizontal",
+        sizes: [0.5, 0.5],
+        children: [
+          createPane({ id: "left", tabIds: ["tab-a", "tab-b"], focusedTabId: "tab-a" }),
+          createPane({ id: "lonely", tabIds: ["tab-e"], focusedTabId: "tab-e" }),
+        ],
+      },
+    };
+    const layout = { root, focusedPaneId: "left" };
+
+    expect(isTabVisibleInAnyPane(layout, "tab-a")).toBe(true);
+    // The distinction from isTabFocusedAmongSiblings: a tab left alone in its pane is on screen.
+    expect(isTabVisibleInAnyPane(layout, "tab-e")).toBe(true);
+    expect(isTabVisibleInAnyPane(layout, "tab-b")).toBe(false);
+    expect(isTabVisibleInAnyPane(layout, "tab-missing")).toBe(false);
+    expect(isTabVisibleInAnyPane(null, "tab-a")).toBe(false);
   });
 });
 

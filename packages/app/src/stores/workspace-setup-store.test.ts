@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  canAutoOpenSetupTabAgain,
   hasWorkspaceSetupFailure,
   shouldAutoCloseSetupTab,
   shouldAutoOpenSetupTab,
@@ -536,6 +537,46 @@ describe("shouldAutoOpenSetupTab", () => {
     for (const mode of ["always", "untilSuccess", "onFailure"] as const) {
       expect(shouldAutoOpenSetupTab({ snapshot: failed, mode, now: NOW })).toBe(true);
     }
+  });
+});
+
+describe("canAutoOpenSetupTabAgain", () => {
+  const running = makeSnapshot({ status: "running" });
+  const failed = makeSnapshot({ status: "failed", error: "boom" });
+  const completed = makeSnapshot({ status: "completed" });
+
+  it("allows the first open", () => {
+    expect(canAutoOpenSetupTabAgain({ snapshot: running, alreadyOpened: null })).toBe(true);
+    expect(canAutoOpenSetupTabAgain({ snapshot: null, alreadyOpened: undefined })).toBe(true);
+  });
+
+  it("reopens once when a run that was opened while running turns out to have failed", () => {
+    expect(
+      canAutoOpenSetupTabAgain({ snapshot: failed, alreadyOpened: { forFailure: false } }),
+    ).toBe(true);
+  });
+
+  it("does not reopen for a failure that already had its open", () => {
+    expect(
+      canAutoOpenSetupTabAgain({ snapshot: failed, alreadyOpened: { forFailure: true } }),
+    ).toBe(false);
+  });
+
+  it("does not reopen a tab closed on a run that never failed", () => {
+    for (const snapshot of [running, completed]) {
+      expect(canAutoOpenSetupTabAgain({ snapshot, alreadyOpened: { forFailure: false } })).toBe(
+        false,
+      );
+    }
+  });
+
+  it("reopens for a failed command inside a completed run", () => {
+    expect(
+      canAutoOpenSetupTabAgain({
+        snapshot: makeSnapshot({ status: "completed", commandStatuses: ["failed"] }),
+        alreadyOpened: { forFailure: false },
+      }),
+    ).toBe(true);
   });
 });
 

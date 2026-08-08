@@ -76,6 +76,7 @@ import {
   collectAllTabs,
   getFocusedBrowserId,
   isTabFocusedAmongSiblings,
+  isTabVisibleInAnyPane,
   type WorkspaceLayout,
   useWorkspaceLayoutStore,
   useWorkspaceLayoutStoreHydrated,
@@ -103,6 +104,9 @@ import {
 } from "@/runtime/host-runtime";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import {
+  type AutoOpenedSetupTabRecord,
+  canAutoOpenSetupTabAgain,
+  hasWorkspaceSetupFailure,
   shouldAutoCloseSetupTab,
   shouldAutoOpenSetupTab,
   shouldShowWorkspaceSetup,
@@ -196,7 +200,7 @@ import {
   type TerminalProfileInput,
 } from "@/screens/workspace/terminals/use-workspace-terminals";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { useAppSettings } from "@/hooks/use-settings";
+import { type SetupTabAutoOpen, useAppSettings } from "@/hooks/use-settings";
 import {
   resolveTerminalProfileLaunch,
   getTerminalProfileIcon,
@@ -2226,13 +2230,24 @@ function WorkspaceScreenContent({
   const emptyWorkspaceSeedRef = useRef<string | null>(null);
   // Keyed by workspace, not a single value: the screen is reused across workspaces, and a
   // single slot would forget workspace A on a visit to B and reopen a Setup tab you closed.
-  // Membership means "this workspace has had its shot", including tabs opened from Show Setup,
+  // An entry means "this workspace has had its shot", including tabs opened from Show Setup,
   // so a closed Setup tab stays closed.
-  const autoOpenedSetupTabWorkspacesRef = useRef<Set<string>>(new Set());
+  //
+  // `forFailure` buys the failure one more shot. A tab opened for a running setup and then
+  // closed had spent the workspace's only chance, so the failure that followed stayed hidden -
+  // which no mode is allowed to do. A run that turns bad may reopen once, and only once.
+  const autoOpenedSetupTabWorkspacesRef = useRef<Map<string, AutoOpenedSetupTabRecord>>(new Map());
   // Narrower: only tabs this screen opened by itself, and therefore the only ones it may close
   // again. Deliberately in-memory — after a reload nothing here is ours, and a restored Setup
   // tab is treated as the user's.
-  const autoOpenedSetupTabIdsRef = useRef<Map<string, string>>(new Map());
+  //
+  // `mode` is the preference as it stood when the tab was opened, so switching to untilSuccess
+  // later cannot retroactively make an already-open tab closeable. `visibleAtOpen` records
+  // whether the tab landed on screen straight away, which decides what its visibility proves
+  // later on: see the adopt check in the close effect.
+  const autoOpenedSetupTabIdsRef = useRef<
+    Map<string, { tabId: string; mode: SetupTabAutoOpen; visibleAtOpen: boolean }>
+  >(new Map());
 
   useEffect(() => {
     if (!isRouteFocused || !client || !normalizedServerId || !normalizedWorkspaceId) {
@@ -2315,11 +2330,15 @@ function WorkspaceScreenContent({
     if (!shouldAutoOpen) {
       return;
     }
+    const hasFailure = hasWorkspaceSetupFailure(workspaceSetupSnapshot);
+    const alreadyOpened = autoOpenedSetupTabWorkspacesRef.current.get(persistenceKey);
+    // Never downgrade: once a failure has had its open, a later snapshot cannot earn another.
+    const forFailure = hasFailure || alreadyOpened?.forFailure === true;
     if (hasSetupTab) {
-      autoOpenedSetupTabWorkspacesRef.current.add(persistenceKey);
+      autoOpenedSetupTabWorkspacesRef.current.set(persistenceKey, { forFailure });
       return;
     }
-    if (autoOpenedSetupTabWorkspacesRef.current.has(persistenceKey)) {
+    if (!canAutoOpenSetupTabAgain({ snapshot: workspaceSetupSnapshot, alreadyOpened })) {
       return;
     }
 
@@ -2336,8 +2355,16 @@ function WorkspaceScreenContent({
       return;
     }
 
-    autoOpenedSetupTabWorkspacesRef.current.add(persistenceKey);
-    autoOpenedSetupTabIdsRef.current.set(persistenceKey, tabId);
+    autoOpenedSetupTabWorkspacesRef.current.set(persistenceKey, { forFailure });
+    // Read through the store, not the rendered `workspaceLayout`: that snapshot predates the open
+    // by a render, and whether the tab landed visible is only answerable after it.
+    const layoutAfterOpen =
+      useWorkspaceLayoutStore.getState().layoutByWorkspace[persistenceKey] ?? null;
+    autoOpenedSetupTabIdsRef.current.set(persistenceKey, {
+      tabId,
+      mode: setupTabAutoOpen,
+      visibleAtOpen: isTabVisibleInAnyPane(layoutAfterOpen, tabId),
+    });
   }, [
     hasSetupTab,
     isRouteFocused,
@@ -2354,15 +2381,26 @@ function WorkspaceScreenContent({
     if (settingsLoading || !isRouteFocused || !persistenceKey) {
       return;
     }
-    const autoOpenedTabId = autoOpenedSetupTabIdsRef.current.get(persistenceKey);
-    if (!autoOpenedTabId) {
+    const autoOpened = autoOpenedSetupTabIdsRef.current.get(persistenceKey);
+    if (!autoOpened) {
       return;
     }
-    const isAdopted = isTabFocusedAmongSiblings(workspaceLayout, autoOpenedTabId);
-    // Switching to the tab adopts it: forget it opened the tab so setup finishing later can't
-    // pull the log out from under whoever is reading it, now or on a subsequent visit.
+    // A tab that landed visible needs siblings before its visibility means anything - it would be
+    // its pane's visible tab either way. A tab opened behind others is the opposite: it is only on
+    // screen because the user put it there, whether by switching to it or by closing what covered
+    // it, so plain visibility is adoption.
+    const isAdopted = autoOpened.visibleAtOpen
+      ? isTabFocusedAmongSiblings(workspaceLayout, autoOpened.tabId)
+      : isTabVisibleInAnyPane(workspaceLayout, autoOpened.tabId);
+    // Adopting forgets the tab: setup finishing later can't pull the log out from under whoever is
+    // reading it, now or on a subsequent visit.
     if (isAdopted) {
       autoOpenedSetupTabIdsRef.current.delete(persistenceKey);
+      return;
+    }
+    // The preference moved since this tab was opened, so the tab predates the policy now in force.
+    // Changing a setting does not close a tab that is already on screen.
+    if (autoOpened.mode !== setupTabAutoOpen) {
       return;
     }
     const shouldAutoClose = shouldAutoCloseSetupTab({
@@ -2374,7 +2412,7 @@ function WorkspaceScreenContent({
       return;
     }
 
-    closeWorkspaceTab(persistenceKey, autoOpenedTabId);
+    closeWorkspaceTab(persistenceKey, autoOpened.tabId);
     // Only the id map is cleared. The workspace stays in the auto-opened set, so the open effect
     // does not immediately reopen what this just closed.
     autoOpenedSetupTabIdsRef.current.delete(persistenceKey);

@@ -89,6 +89,32 @@ export function shouldAutoOpenSetupTab(input: {
 }
 
 /**
+ * What a caller has to remember about a Setup tab it opened by itself, to answer
+ * {@link canAutoOpenSetupTabAgain} later.
+ */
+export interface AutoOpenedSetupTabRecord {
+  /** Whether the snapshot that earned the open had already failed. */
+  forFailure: boolean;
+}
+
+/**
+ * Whether a workspace may have its Setup tab auto-opened, given what has already been opened for
+ * it. One open per workspace, so a tab you closed stays closed - with one exception: a run that
+ * turns out to have failed gets the tab back, once. Without it, closing the tab while setup was
+ * still running would suppress the failure that followed, and no mode may hide a failure.
+ */
+export function canAutoOpenSetupTabAgain(input: {
+  snapshot: WorkspaceSetupSnapshot | null;
+  alreadyOpened: AutoOpenedSetupTabRecord | null | undefined;
+}): boolean {
+  const { snapshot, alreadyOpened } = input;
+  if (!alreadyOpened) {
+    return true;
+  }
+  return hasWorkspaceSetupFailure(snapshot) && !alreadyOpened.forFailure;
+}
+
+/**
  * Whether an auto-opened Setup tab has outlived its purpose and should close itself.
  *
  * Only `untilSuccess` closes anything, and only on a clean finish — a failed run keeps the tab.

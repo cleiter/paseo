@@ -978,13 +978,28 @@ export function collectAllPanes(root: SplitNode): SplitPane[] {
 }
 
 /**
+ * Whether the tab is on screen: it is the visible tab of its pane. Any pane counts, not just the
+ * focused one — in a split, an unfocused pane's visible tab is still on screen.
+ */
+export function isTabVisibleInAnyPane(
+  layout: WorkspaceLayout | null | undefined,
+  tabId: string,
+): boolean {
+  if (!layout || !tabId) {
+    return false;
+  }
+  return collectAllPanes(layout.root).some((pane) => pane.focusedTabId === tabId);
+}
+
+/**
  * Whether the tab is on screen *because someone chose it*: it is the visible tab of its pane and
- * that pane holds other tabs it could be showing instead. Any pane counts, not just the focused
- * one — in a split, an unfocused pane's visible tab is still on screen.
+ * that pane holds other tabs it could be showing instead.
  *
- * The sibling condition is what makes this a signal. A tab that is alone in its pane is always
- * that pane's visible tab, even one opened in the background, so on its own visibility says
- * nothing about intent. Used before closing a tab on the user's behalf.
+ * The sibling condition is what makes visibility a signal for a tab that landed on screen by
+ * default. A tab alone in its pane is always that pane's visible tab, even one opened in the
+ * background, so on its own visibility says nothing about intent. For a tab that was opened
+ * *behind* others, plain {@link isTabVisibleInAnyPane} is the stronger question to ask: it only
+ * became visible because something the user did put it there.
  */
 export function isTabFocusedAmongSiblings(
   layout: WorkspaceLayout | null | undefined,
