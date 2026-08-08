@@ -60,6 +60,8 @@ export const en = {
       newAgent: "New agent",
       addProject: "Add project",
       home: "Home",
+      groupByProject: "Group by project",
+      groupByStatus: "Group by status",
       modelGroupLabel: "Model",
       modelSearchKeywords: "switch model change model set model select model",
       thinkingGroupLabel: "Thinking",
