@@ -147,6 +147,15 @@ export function createQuitLifecycle({
       return;
     }
 
+    // Past the gate this quit is happening, so latch it even though nobody was
+    // asked. Window geometry flushes from a before-quit listener that gates on
+    // this latch, and the quit ends in app.exit(0), which fires neither
+    // will-quit nor the window close event. Without this, any quit that skips
+    // the dialog (no managed daemon, or keepRunningAfterQuit on) would drop the
+    // last resize or move. The flush listener is registered in createWindow,
+    // after main.ts registers this handler, so it observes the latch we set here.
+    quitConfirmation.commit();
+
     closeTransportSessions();
     if (quittingForUpdate) return;
     if (quitting) {

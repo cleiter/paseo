@@ -42,6 +42,24 @@ function committedGate(): QuitConfirmationGate {
   };
 }
 
+/**
+ * A gate for a quit that needs no dialog and has not been committed yet: no
+ * managed daemon is running, or keepRunningAfterQuit is on. Distinct from
+ * committedGate(), whose latch is hardwired true and so cannot observe whether
+ * the lifecycle sets it.
+ */
+function silentGate(): QuitConfirmationGate {
+  let committed = false;
+  return {
+    isQuitCommitted: () => committed,
+    shouldConfirm: () => false,
+    requestConfirmation: async () => true,
+    commit() {
+      committed = true;
+    },
+  };
+}
+
 /** A gate that will ask, backed by a dialog the test resolves by hand. */
 function askingGate(): QuitConfirmationGate & {
   answer(confirmed: boolean): void;
@@ -445,6 +463,24 @@ describe("quit-lifecycle", () => {
       quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
       await waitForQuitLifecycle();
 
+      expect(events).toEqual(["close-transports", "stop-daemon", "install-update", "exit:0"]);
+    });
+
+    // Regression: a quit that skips the dialog used to leave the latch false all
+    // the way to app.exit(0). Window geometry flushes from a before-quit listener
+    // gated on that latch, and app.exit(0) fires no window close event, so the
+    // last resize or move was silently dropped on every unprompted quit.
+    it("commits the latch for a quit that never needed a dialog", async () => {
+      const gate = silentGate();
+      const { quitLifecycle, events } = createGatedLifecycle(gate);
+
+      quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
+
+      // Synchronously, while the before-quit listeners are still running: the
+      // geometry flush is one of them and reads the latch during this emit.
+      expect(gate.isQuitCommitted()).toBe(true);
+
+      await waitForQuitLifecycle();
       expect(events).toEqual(["close-transports", "stop-daemon", "install-update", "exit:0"]);
     });
 
