@@ -375,6 +375,28 @@ function isInsideDir(candidate: string, dir: string): boolean {
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
+// Reads a plan file whose path has already passed the containment check. The descriptor is
+// opened once and stat'd and read through that same descriptor, so the file cannot be swapped
+// between the check and the read. O_NOFOLLOW rejects a path that became a symlink after it was
+// resolved; O_NONBLOCK stops a FIFO from parking the event loop before fstat can reject it.
+// Both are absent on Windows, where the containment check and the fstat still apply.
+function readContainedPlanFile(resolved: string): string | null {
+  const flags =
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
+  const fd = fs.openSync(resolved, flags);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_PLAN_FILE_BYTES) {
+      return null;
+    }
+    const buffer = Buffer.alloc(stat.size);
+    const read = fs.readSync(fd, buffer, 0, stat.size, 0);
+    return buffer.subarray(0, read).toString("utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 // The ExitPlanMode registry outlives the turn (see exitPlanModeCalls), so it needs its own
 // bound. A session realistically holds a handful of plans; 32 is far above that and keeps a
 // pathological agent from growing the map without limit.
@@ -5176,14 +5198,9 @@ class ClaudeAgentSession implements AgentSession {
           );
           return null;
         }
-        // Only read a regular file within a sane size, so a FIFO/device path can't block the
-        // event loop and a huge file can't exhaust memory.
-        const stat = fs.statSync(resolved);
-        if (stat.isFile() && stat.size > 0 && stat.size <= MAX_PLAN_FILE_BYTES) {
-          const text = fs.readFileSync(resolved, "utf8");
-          if (text.trim().length > 0) {
-            return text;
-          }
+        const text = readContainedPlanFile(resolved);
+        if (text && text.trim().length > 0) {
+          return text;
         }
       } catch (error) {
         // A deleted or unreadable plan file is expected (plans outlive their files), so this

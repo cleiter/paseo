@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as childProcess from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -1405,6 +1406,13 @@ test("refuses a planFilePath outside the Claude plans directory", async () => {
     const link = path.join(plansDir, "link.md");
     fs.symlinkSync(secret, link);
     expect(internal.resolvePlanTextFromToolInput({ planFilePath: link })).toBeNull();
+    // A FIFO inside the plans directory is rejected without blocking. Without O_NONBLOCK the
+    // open would park the event loop until a writer showed up, which is never.
+    if (process.platform !== "win32") {
+      const fifo = path.join(plansDir, "fifo.md");
+      childProcess.execFileSync("mkfifo", [fifo]);
+      expect(internal.resolvePlanTextFromToolInput({ planFilePath: fifo })).toBeNull();
+    }
   } finally {
     if (previousConfigDir === undefined) {
       delete process.env.CLAUDE_CONFIG_DIR;
