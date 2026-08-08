@@ -361,6 +361,20 @@ const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
 // and bounds a hostile/corrupt path from exhausting memory or stalling the event loop.
 const MAX_PLAN_FILE_BYTES = 1024 * 1024;
 
+// planFilePath is model-supplied, so the read is contained to the directory Claude Code writes
+// plans into. Without this the daemon would read any path the model names and publish it as
+// plan text, which sidesteps the agent's own Read permission rules (a user who denies
+// Read(./.env) would still see it surfaced through a plan card).
+function claudePlansDir(): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+  return path.join(configDir, "plans");
+}
+
+function isInsideDir(candidate: string, dir: string): boolean {
+  const relative = path.relative(dir, candidate);
+  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
 // The ExitPlanMode registry outlives the turn (see exitPlanModeCalls), so it needs its own
 // bound. A session realistically holds a handful of plans; 32 is far above that and keeps a
 // pathological agent from growing the map without limit.
@@ -5151,17 +5165,31 @@ class ClaudeAgentSession implements AgentSession {
     const filePath = input?.planFilePath;
     if (typeof filePath === "string" && filePath.length > 0) {
       try {
-        // The path is model-supplied; only read a regular file within a sane size so a
-        // FIFO/device path can't block the event loop and a huge file can't exhaust memory.
-        const stat = fs.statSync(filePath);
+        // realpath first: containment has to hold for the file actually opened, or a symlink
+        // inside the plans directory would point the read anywhere.
+        const resolved = fs.realpathSync(path.resolve(filePath));
+        const plansDir = fs.realpathSync(claudePlansDir());
+        if (!isInsideDir(resolved, plansDir)) {
+          this.logger.warn(
+            { filePath },
+            "ExitPlanMode planFilePath outside the Claude plans directory; refusing to read",
+          );
+          return null;
+        }
+        // Only read a regular file within a sane size, so a FIFO/device path can't block the
+        // event loop and a huge file can't exhaust memory.
+        const stat = fs.statSync(resolved);
         if (stat.isFile() && stat.size > 0 && stat.size <= MAX_PLAN_FILE_BYTES) {
-          const text = fs.readFileSync(filePath, "utf8");
+          const text = fs.readFileSync(resolved, "utf8");
           if (text.trim().length > 0) {
             return text;
           }
         }
-      } catch {
-        // Plan file may be gone / unreadable; treat as no recoverable text.
+      } catch (error) {
+        // A deleted or unreadable plan file is expected (plans outlive their files), so this
+        // degrades to no card rather than failing the turn. Logged so a genuine I/O fault is
+        // still diagnosable.
+        this.logger.debug({ err: error, filePath }, "Could not read ExitPlanMode planFilePath");
       }
     }
     return null;

@@ -1338,9 +1338,13 @@ test("resolves the plan text from planFilePath when input.plan is empty (CC 2.0.
   const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
   sdkQueryFactory.mockImplementation(() => queryMock);
   const session = await createSession();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-plan-"));
-  const planFile = path.join(dir, "plan.md");
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-claude-"));
+  const plansDir = path.join(configDir, "plans");
+  fs.mkdirSync(plansDir);
+  const planFile = path.join(plansDir, "plan.md");
   fs.writeFileSync(planFile, "# Plan from file\n\n- step one");
+  const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = configDir;
   try {
     const internal = asInternals<{
       resolvePlanTextFromToolInput: (input: Record<string, unknown> | null) => string | null;
@@ -1350,20 +1354,64 @@ test("resolves the plan text from planFilePath when input.plan is empty (CC 2.0.
     );
     // Missing file: the read throws and is swallowed -> no recoverable text.
     expect(
-      internal.resolvePlanTextFromToolInput({ planFilePath: path.join(dir, "gone.md") }),
+      internal.resolvePlanTextFromToolInput({ planFilePath: path.join(plansDir, "gone.md") }),
     ).toBeNull();
     // input.plan wins over the file when present.
     expect(internal.resolvePlanTextFromToolInput({ plan: "inline", planFilePath: planFile })).toBe(
       "inline",
     );
     // A non-regular path (directory) is rejected, not read — guards against FIFO/device paths.
-    expect(internal.resolvePlanTextFromToolInput({ planFilePath: dir })).toBeNull();
+    expect(internal.resolvePlanTextFromToolInput({ planFilePath: plansDir })).toBeNull();
     // An oversized file is not read, so a hostile path can't exhaust memory / stall the loop.
-    const hugeFile = path.join(dir, "huge.md");
+    const hugeFile = path.join(plansDir, "huge.md");
     fs.writeFileSync(hugeFile, "#".repeat(1024 * 1024 + 1));
     expect(internal.resolvePlanTextFromToolInput({ planFilePath: hugeFile })).toBeNull();
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    if (previousConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+    }
+    fs.rmSync(configDir, { recursive: true, force: true });
+    await session.close();
+  }
+});
+
+test("refuses a planFilePath outside the Claude plans directory", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-claude-"));
+  const plansDir = path.join(configDir, "plans");
+  fs.mkdirSync(plansDir);
+  const secret = path.join(configDir, "secret.env");
+  fs.writeFileSync(secret, "API_KEY=super-secret");
+  const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = configDir;
+  try {
+    const internal = asInternals<{
+      resolvePlanTextFromToolInput: (input: Record<string, unknown> | null) => string | null;
+    }>(session);
+    // A model-named path outside the plans directory is never read, so a plan card can't be
+    // used to surface a file the agent's own Read rules would have denied.
+    expect(internal.resolvePlanTextFromToolInput({ planFilePath: secret })).toBeNull();
+    // Traversal out of the plans directory is rejected too.
+    expect(
+      internal.resolvePlanTextFromToolInput({
+        planFilePath: path.join(plansDir, "..", "secret.env"),
+      }),
+    ).toBeNull();
+    // And a symlink planted inside the plans directory can't redirect the read.
+    const link = path.join(plansDir, "link.md");
+    fs.symlinkSync(secret, link);
+    expect(internal.resolvePlanTextFromToolInput({ planFilePath: link })).toBeNull();
+  } finally {
+    if (previousConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+    }
+    fs.rmSync(configDir, { recursive: true, force: true });
     await session.close();
   }
 });
