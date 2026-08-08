@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CommandCenterWorkspaceResult } from "./results";
-import { filterAndRankWorkspaces, parseChangeRequestQuery } from "./workspace-search";
+import { filterAndRankWorkspaces } from "./workspace-search";
 
 function workspace(input: {
   id: string;
@@ -24,24 +24,6 @@ function ids(rows: readonly CommandCenterWorkspaceResult[], query: string): stri
   );
 }
 
-describe("parseChangeRequestQuery", () => {
-  it("accepts a bare number", () => {
-    expect(parseChangeRequestQuery("42")).toBe(42);
-  });
-
-  it("accepts every forge prefix and noun spelling", () => {
-    for (const query of ["#42", "!42", "pr 42", "mr 42", "PR #42", "mr!42", "pr42", " 42 "]) {
-      expect(parseChangeRequestQuery(query)).toBe(42);
-    }
-  });
-
-  it("rejects text that merely contains digits", () => {
-    for (const query of ["fix-42-retries", "42x", "v4.2", "", "pr"]) {
-      expect(parseChangeRequestQuery(query)).toBeNull();
-    }
-  });
-});
-
 describe("filterAndRankWorkspaces", () => {
   const subject = workspace({
     id: "payments",
@@ -55,8 +37,16 @@ describe("filterAndRankWorkspaces", () => {
   });
 
   it("matches its own change-request number in every spelling", () => {
-    for (const query of ["42", "#42", "!42", "pr 42", "mr 42"]) {
+    const spellings = ["42", " 42 ", "#42", "!42", "pr 42", "mr 42", "PR #42", "mr!42", "pr42"];
+    for (const query of spellings) {
       expect(ids([subject], query)).toEqual(["payments"]);
+    }
+  });
+
+  it("does not take the number path for text that merely contains digits", () => {
+    const numbered = workspace({ id: "unrelated workspace", changeRequestNumber: 42 });
+    for (const query of ["fix-42-retries", "42x", "v4.2", "pr"]) {
+      expect(ids([numbered], query)).toEqual([]);
     }
   });
 
@@ -77,7 +67,11 @@ describe("filterAndRankWorkspaces", () => {
   });
 
   it("falls back to text matching when the number does not match", () => {
-    const textual = workspace({ id: "text", subtitle: "branch fix-42-retries", changeRequestNumber: 7 });
+    const textual = workspace({
+      id: "text",
+      subtitle: "branch fix-42-retries",
+      changeRequestNumber: 7,
+    });
     expect(ids([textual], "42")).toEqual(["text"]);
   });
 
