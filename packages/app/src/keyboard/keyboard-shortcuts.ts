@@ -96,7 +96,7 @@ interface ShortcutHelp {
    * Every other row derives its keys from `combo`, so a rebound shortcut shows
    * what it now does rather than what it shipped as.
    */
-  displayKeys?: ShortcutKey[];
+  defaultDisplayKeys?: ShortcutKey[];
   note?: string;
 }
 
@@ -384,7 +384,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-jump-index",
       section: "navigation",
       label: "Jump to workspace",
-      displayKeys: ["mod", "1-9"],
+      defaultDisplayKeys: ["mod", "1-9"],
     },
   },
   {
@@ -397,7 +397,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-jump-index",
       section: "navigation",
       label: "Jump to workspace",
-      displayKeys: ["mod", "1-9"],
+      defaultDisplayKeys: ["mod", "1-9"],
     },
   },
   {
@@ -410,7 +410,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-jump-index",
       section: "navigation",
       label: "Jump to workspace",
-      displayKeys: ["alt", "1-9"],
+      defaultDisplayKeys: ["alt", "1-9"],
     },
   },
 
@@ -425,7 +425,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-jump-index",
       section: "navigation",
       label: "Jump to tab",
-      displayKeys: ["mod", "alt", "1-9"],
+      defaultDisplayKeys: ["mod", "alt", "1-9"],
     },
   },
   {
@@ -438,7 +438,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-jump-index",
       section: "navigation",
       label: "Jump to tab",
-      displayKeys: ["alt", "1-9"],
+      defaultDisplayKeys: ["alt", "1-9"],
     },
   },
   {
@@ -451,7 +451,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-jump-index",
       section: "navigation",
       label: "Jump to tab",
-      displayKeys: ["alt", "shift", "1-9"],
+      defaultDisplayKeys: ["alt", "shift", "1-9"],
     },
   },
 
@@ -737,7 +737,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "show-shortcuts",
       section: "panels",
       label: "Show keyboard shortcuts",
-      displayKeys: ["?"],
+      defaultDisplayKeys: ["?"],
       note: "Available when focus is not in a text field or terminal.",
     },
   },
@@ -1072,7 +1072,11 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
     if (binding.repeat === false && lastCombo) {
       lastCombo.repeat = false;
     }
-    return { ...binding, combo: override, parsedChord };
+    if (!binding.help?.defaultDisplayKeys) {
+      return { ...binding, combo: override, parsedChord };
+    }
+    const { defaultDisplayKeys: _defaultDisplayKeys, ...help } = binding.help;
+    return { ...binding, combo: override, parsedChord, help };
   });
 }
 
@@ -1375,8 +1379,9 @@ export function getBindingIdForAction(
  * The keys to display for one binding, derived from the combo that actually
  * fires so a rebound shortcut never advertises the keys it shipped with.
  *
- * `help.displayKeys` wins where it is set, but that is only the handful of rows
- * whose combo cannot express what they mean — see `ShortcutHelp.displayKeys`.
+ * `help.defaultDisplayKeys` wins where it is set, but only on the shipped
+ * binding. Effective bindings discard it when an override replaces the combo,
+ * so rebound rows still derive the keys that now fire.
  * `parsedChord` is the single source of truth for "has no keys": it is derived
  * from `combo`, so it covers both a user-unassigned shortcut and a binding
  * authored without a default.
@@ -1385,7 +1390,7 @@ function displayChordForBinding(binding: ParsedShortcutBinding): ShortcutKey[][]
   if (binding.parsedChord.length === 0) {
     return null;
   }
-  const displayKeys = binding.help?.displayKeys;
+  const displayKeys = binding.help?.defaultDisplayKeys;
   if (displayKeys) {
     return [displayKeys];
   }

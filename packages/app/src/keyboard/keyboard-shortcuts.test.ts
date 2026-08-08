@@ -690,6 +690,7 @@ describe("keyboard-shortcut help sections", () => {
     const NEW_WORKSPACE_BINDING = "workspace-new-cmd-n-mac";
     const MAC_INDEX_BINDING = "workspace-navigate-index-cmd-digit-mac";
     const PANE_FOCUS_LEFT_BINDING = "workspace-pane-focus-left-cmd-shift-left";
+    const SHOW_SHORTCUTS_BINDING = "shortcuts-dialog-toggle-question-mark";
 
     function rowChord(overrides: ShortcutOverrides, id: string) {
       const sections = buildKeyboardShortcutHelpSections(
@@ -738,7 +739,7 @@ describe("keyboard-shortcut help sections", () => {
     });
 
     // `1-9` and `?` are display-only tokens no combo string can spell, so these
-    // two rows opt out of derivation via `help.displayKeys`.
+    // two rows opt out of default derivation via `help.defaultDisplayKeys`.
     it("keeps the wildcard token on the index-jump row", () => {
       expect(rowChord({}, "workspace-jump-index")).toEqual([["mod", "1-9"]]);
     });
@@ -747,12 +748,15 @@ describe("keyboard-shortcut help sections", () => {
       expect(rowChord({}, "show-shortcuts")).toEqual([["?"]]);
     });
 
-    // A display override outranks the combo, so rebinding an index jump leaves
-    // the wildcard in place. `getWorkspaceIndexJumpModifierKey` is what hides the
-    // now-wrong per-workspace badges — see its own tests.
-    it("keeps the wildcard token even when the index jump is rebound", () => {
+    it("replaces the default-only wildcard when the index jump is rebound", () => {
       expect(rowChord({ [MAC_INDEX_BINDING]: "Ctrl+Digit" }, "workspace-jump-index")).toEqual([
-        ["mod", "1-9"],
+        ["ctrl", "Digit"],
+      ]);
+    });
+
+    it("replaces the default-only ? when show shortcuts is rebound", () => {
+      expect(rowChord({ [SHOW_SHORTCUTS_BINDING]: "Cmd+K" }, "show-shortcuts")).toEqual([
+        ["mod", "K"],
       ]);
     });
 

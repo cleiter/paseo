@@ -8,9 +8,6 @@ import { openSettingsSection } from "../../app/e2e/support/helpers/settings";
 // checks for `window.paseoDesktop` -- so this belongs in the desktop suite even
 // though no `.electron.*` module sits in the surface's import path.
 const SHORTCUTS_ROW = "show-shortcuts";
-// Rebinding is asserted on a different row than unassigning: `show-shortcuts`
-// carries a display override (`?`), so its badge would not move when rebound.
-const REBIND_ROW = "new-workspace";
 
 /**
  * The smallest bridge that makes the app believe it is Electron. The built-in
@@ -151,13 +148,11 @@ test("an unassigned shortcut lists no keys in the shortcuts cheat sheet", async 
 test("a rebound shortcut lists its new keys in the shortcuts cheat sheet", async ({ page }) => {
   await openShortcutsSettings(page);
 
-  // The bridge reports darwin, so the mac binding is the active one and the
-  // badges render ⌘ regardless of the host this suite runs on.
-  const defaultKeys = page.getByText("⌘N", { exact: true });
+  const defaultKeys = page.getByText("?", { exact: true });
   await expect(defaultKeys).toBeVisible();
 
-  await page.getByTestId(`shortcut-actions-${REBIND_ROW}`).click();
-  await page.getByTestId(`shortcut-bind-${REBIND_ROW}`).click();
+  await page.getByTestId(`shortcut-actions-${SHORTCUTS_ROW}`).click();
+  await page.getByTestId(`shortcut-bind-${SHORTCUTS_ROW}`).click();
   await page.keyboard.press("Alt+Shift+K");
   await page.getByText("Done", { exact: true }).click();
 
@@ -166,8 +161,8 @@ test("a rebound shortcut lists its new keys in the shortcuts cheat sheet", async
   await expect(defaultKeys).toHaveCount(0);
 
   const dialog = await openCheatSheet(page);
-  const row = dialog.getByTestId(`shortcut-help-row-${REBIND_ROW}`);
+  const row = dialog.getByTestId(`shortcut-help-row-${SHORTCUTS_ROW}`);
   await expect(row.getByText("⌥+Shift+K", { exact: true })).toBeVisible();
   // The whole point: the cheat sheet stops advertising the shipped default.
-  await expect(row.getByText("⌘N", { exact: true })).toHaveCount(0);
+  await expect(row.getByText("?", { exact: true })).toHaveCount(0);
 });
