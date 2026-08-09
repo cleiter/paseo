@@ -33,6 +33,16 @@ export function getStatusDotColor(input: {
   return null;
 }
 
+/**
+ * The running color as a plain string. `getStatusDotColor` is nullable because `done` has no
+ * dot, but running always does — and the orbit ring takes its color as a required prop rather
+ * than a style, so it cannot absorb a null. Lives here so the bucket-to-color map stays in one
+ * file.
+ */
+export function getRunningStatusDotColor(theme: Theme): string {
+  return getStatusDotColor({ theme, bucket: "running" }) ?? theme.colors.statusDotRunning;
+}
+
 export function isEmphasizedStatusDotBucket(
   bucket: SidebarStateBucket | null | undefined,
 ): boolean {

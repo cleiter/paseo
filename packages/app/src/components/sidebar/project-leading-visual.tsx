@@ -1,6 +1,7 @@
 import { ActivityIndicator, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
+import { OrbitStatusRing } from "@/components/orbit-status-ring";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { STATUS_BUCKET_LABELS } from "@/hooks/sidebar-status-view-model";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -11,7 +12,7 @@ import {
   type ProjectStatusBadgeDotBucket,
 } from "@/utils/project-status-badge-content";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
-import { getStatusDotColor } from "@/utils/status-dot-color";
+import { getRunningStatusDotColor, getStatusDotColor } from "@/utils/status-dot-color";
 import { STATUS_INDICATOR_ALERT_SIZE } from "@/utils/status-indicator-geometry";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 
@@ -30,12 +31,23 @@ const STATUS_BADGE_OFFSET = -4;
 // The filled alert occupies the full badge shell so needs-input remains more prominent than
 // the passive status dots.
 const STATUS_BADGE_DOT_SIZE = 6;
+// The busy ring is drawn at the shell's own size, so it overhangs the fill by half its stroke
+// and no further. The shell no longer clips, because the clip is not what makes it read as a
+// knockout — its fill is — and clipping the ring is exactly what made the previous attempt at
+// this invisible on project rows.
+//
+// Sized down from 14: the badge sits half off the icon's corner, so a ring wider than the
+// shell hangs diagonally into the row and the 4pt of empty space it opened up around the 6pt
+// dot read as a hoop rather than as something orbiting. 12 keeps the same dot-to-ring gap the
+// standalone rows have.
+const STATUS_BADGE_RING_SIZE = STATUS_BADGE_SIZE;
 // Matches the workspace title's lineHeight (sidebar-workspace-row-content's
 // workspaceBranchText) so the icon centers on the title rather than floating above it.
 const LEADING_SLOT_HEIGHT = 20;
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+const ThemedOrbitStatusRing = withUnistyles(OrbitStatusRing);
 
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -44,6 +56,7 @@ const needsInputColorMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
   fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
+const runningRingColorMapping = (theme: Theme) => ({ color: getRunningStatusDotColor(theme) });
 
 /**
  * Leading slot of a sidebar project row: chevron on hover, archive spinner while removing,
@@ -194,6 +207,19 @@ function getStatusBadgeBackdropStyle(backdrop: SurfaceBackdrop): ViewStyle {
 }
 
 function ProjectStatusDot({ bucket }: { bucket: ProjectStatusBadgeDotBucket }) {
+  // Busy carries the same orbiting ring the standalone rows do. The dot inside it is the
+  // ordinary running dot at the ordinary size, so a project row and a workspace row report
+  // work with the same mark.
+  if (bucket === "running") {
+    return (
+      <ThemedOrbitStatusRing
+        testID="project-status-dot"
+        size={STATUS_BADGE_RING_SIZE}
+        dotSize={STATUS_BADGE_DOT_SIZE}
+        uniProps={runningRingColorMapping}
+      />
+    );
+  }
   return <View testID="project-status-dot" style={getStatusDotColorStyle(bucket)} />;
 }
 
@@ -227,9 +253,11 @@ function ProjectInlineChevron({ chevron }: { chevron: "expand" | "collapse" | nu
   return <ChevronRight size={14} color="#9ca3af" />;
 }
 
-function getStatusDotColorStyle(bucket: ProjectStatusBadgeDotBucket): ViewStyle {
+// The static dot buckets only. Running is drawn by the orbit ring, which owns its own dot.
+function getStatusDotColorStyle(
+  bucket: Exclude<ProjectStatusBadgeDotBucket, "running">,
+): ViewStyle {
   if (bucket === "failed") return styles.statusDotFailed;
-  if (bucket === "running") return styles.statusDotRunning;
   return styles.statusDotAttention;
 }
 
@@ -280,12 +308,10 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: theme.borderRadius.full,
       alignItems: "center",
       justifyContent: "center",
-      overflow: "hidden",
     },
     statusBadgeOnSidebar: { backgroundColor: theme.colors.surfaceSidebar },
     statusBadgeOnSidebarHover: { backgroundColor: theme.colors.surfaceSidebarHover },
     statusBadgeOnSurface2: { backgroundColor: theme.colors.surface2 },
-    statusDotRunning: statusDot("running"),
     statusDotFailed: statusDot("failed"),
     statusDotAttention: statusDot("attention"),
   };

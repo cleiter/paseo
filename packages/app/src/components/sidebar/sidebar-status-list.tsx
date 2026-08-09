@@ -404,6 +404,8 @@ function StatusGroupIcon({ bucket }: { bucket: StatusGroup["bucket"] }) {
       return <ThemedCircleX size={14} uniProps={failedColorMapping} />;
     case "attention":
       return <ThemedCircleCheck size={14} uniProps={attentionColorMapping} />;
+    // Static, unlike the rows underneath it. Motion belongs where you look to find out *what*
+    // is working; a turning header competes with the rows for the same glance.
     case "running":
       return <ThemedCircleDot size={14} uniProps={runningColorMapping} />;
     case "done":

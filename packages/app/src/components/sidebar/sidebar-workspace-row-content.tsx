@@ -3,6 +3,7 @@ import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
+import { OrbitStatusRing } from "@/components/orbit-status-ring";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
@@ -19,7 +20,11 @@ import {
 import { useAppSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { getStatusDotColor, isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
+import {
+  getRunningStatusDotColor,
+  getStatusDotColor,
+  isEmphasizedStatusDotBucket,
+} from "@/utils/status-dot-color";
 import {
   STATUS_INDICATOR_ALERT_SIZE,
   STATUS_INDICATOR_DOT_SIZE,
@@ -32,6 +37,10 @@ import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sideba
 const SCRIM_WIDTH = 48;
 const SCRIM_SOLID_OFFSET = "55%";
 
+// The orbit ring around a busy row's dot. Sized to the 16pt leading slot with a point of air
+// on each side, which leaves 2pt between the 8pt dot and the ring's inner edge.
+const STANDALONE_ORBIT_RING_SIZE = 14;
+
 const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = 0;
@@ -43,7 +52,10 @@ const needsInputColorMapping = (theme: Theme) => ({
   fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
 
+const runningRingColorMapping = (theme: Theme) => ({ color: getRunningStatusDotColor(theme) });
+
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+const ThemedOrbitStatusRing = withUnistyles(OrbitStatusRing);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
@@ -222,13 +234,19 @@ function WorkspaceStatusIndicator({
   reserveIdleSpace?: boolean;
 }) {
   // Busy is a dot here for the same reason it is on a project icon: every status in the
-  // sidebar is a dot, and a row with a project icon simply moves that dot onto the icon.
+  // sidebar is a dot, and a row with a project icon simply moves that dot onto the icon. Busy
+  // is the one dot that carries an orbiting ring — the dot itself stays identical to its
+  // neighbours so the column keeps its rail, and only the ring moves.
   // A row starting up and a row working are both busy, so they share the dot and differ only
   // in testID.
   if (loading) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-loading">
-        <View style={styles.standaloneRunningDot} />
+        <ThemedOrbitStatusRing
+          size={STANDALONE_ORBIT_RING_SIZE}
+          dotSize={STATUS_INDICATOR_DOT_SIZE}
+          uniProps={runningRingColorMapping}
+        />
       </View>
     );
   }
@@ -236,7 +254,11 @@ function WorkspaceStatusIndicator({
   if (shouldRenderSyncedStatusLoader({ bucket })) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-running">
-        <View style={styles.standaloneRunningDot} />
+        <ThemedOrbitStatusRing
+          size={STANDALONE_ORBIT_RING_SIZE}
+          dotSize={STATUS_INDICATOR_DOT_SIZE}
+          uniProps={runningRingColorMapping}
+        />
       </View>
     );
   }
@@ -577,12 +599,6 @@ const styles = StyleSheet.create((theme) => ({
     height: STATUS_INDICATOR_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
     backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
-  },
-  standaloneRunningDot: {
-    width: STATUS_INDICATOR_DOT_SIZE,
-    height: STATUS_INDICATOR_DOT_SIZE,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
   },
   idleStatusDot: {
     width: 8,
