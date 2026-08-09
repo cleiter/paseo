@@ -62,6 +62,7 @@ import { RetainedPanel } from "@/components/retained-panel";
 import { WindowChromeRegion } from "@/utils/desktop-window";
 import { SourceControlPanelIcon } from "@/components/icons/source-control-panel-icon";
 import { WorkspaceActions } from "@/git/workspace-actions";
+import { WorkspaceHeaderProjectIcon } from "@/screens/workspace/workspace-header-project-icon";
 import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-in-editor-button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
@@ -1148,6 +1149,7 @@ function WorkspaceHeaderProjectRow({
 
 interface WorkspaceHeaderTitleBarProps {
   isLoading: boolean;
+  workspaceDescriptor: WorkspaceDescriptor | null;
   title: string;
   subtitle: string;
   isSubtitleDistinct: boolean;
@@ -1183,6 +1185,7 @@ interface WorkspaceHeaderTitleBarProps {
 
 function WorkspaceHeaderTitleBar({
   isLoading,
+  workspaceDescriptor,
   title,
   subtitle,
   isSubtitleDistinct,
@@ -1217,6 +1220,7 @@ function WorkspaceHeaderTitleBar({
 }: WorkspaceHeaderTitleBarProps) {
   return (
     <View style={styles.headerTitleContainer}>
+      <WorkspaceHeaderProjectIcon workspace={workspaceDescriptor} serverId={normalizedServerId} />
       {isLoading ? (
         <View style={styles.headerTitleTextGroup}>
           <View style={styles.headerTitleSkeleton} />
@@ -3708,6 +3712,7 @@ function WorkspaceScreenContent({
               <SidebarMenuToggle />
               <WorkspaceHeaderTitleBar
                 isLoading={isWorkspaceHeaderLoading}
+                workspaceDescriptor={workspaceDescriptor}
                 title={workspaceHeaderTitle}
                 subtitle={workspaceHeaderSubtitle}
                 isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}

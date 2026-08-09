@@ -92,8 +92,8 @@ function projectCanCreateWorktree(project: HostProjectListItem): boolean {
   return project.hosts.some((host) => host.worktreeSupport !== "unsupported");
 }
 
-function getHostProjectPlacement(
-  project: HostProjectListItem,
+export function getHostProjectPlacement(
+  project: Pick<HostProjectListItem, "hosts">,
   serverId: string,
 ): WorkspaceStructureHostPlacement | null {
   for (const host of project.hosts) {

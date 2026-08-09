@@ -227,6 +227,59 @@ describe("buildSidebarProjectRowModel", () => {
     });
   });
 
+  it("prefers the requested host's placement over the first one", () => {
+    const iconTarget = resolveSidebarProjectIconTarget(
+      project({
+        hosts: [
+          { serverId: "host-b", iconWorkingDir: "/repo/b", worktreeSupport: "supported" as const },
+          { serverId: "host-a", iconWorkingDir: "/repo/a", worktreeSupport: "supported" as const },
+        ],
+      }),
+      "host-a",
+    );
+
+    expect(iconTarget).toEqual({
+      serverId: "host-a",
+      projectId: "project-host-a",
+      iconWorkingDir: "/repo/a",
+    });
+  });
+
+  it("falls back to the first placement when the requested host has none", () => {
+    const iconTarget = resolveSidebarProjectIconTarget(
+      project({
+        hosts: [
+          { serverId: "host-b", iconWorkingDir: "/repo/b", worktreeSupport: "supported" as const },
+        ],
+      }),
+      "host-missing",
+    );
+
+    expect(iconTarget).toEqual({
+      serverId: "host-b",
+      projectId: "project-host-b",
+      iconWorkingDir: "/repo/b",
+    });
+  });
+
+  it("falls back to the first placement when the requested host has no working dir", () => {
+    const iconTarget = resolveSidebarProjectIconTarget(
+      project({
+        hosts: [
+          { serverId: "host-b", iconWorkingDir: "/repo/b", worktreeSupport: "supported" as const },
+          { serverId: "host-a", iconWorkingDir: "   ", worktreeSupport: "supported" as const },
+        ],
+      }),
+      "host-a",
+    );
+
+    expect(iconTarget).toEqual({
+      serverId: "host-b",
+      projectId: "project-host-b",
+      iconWorkingDir: "/repo/b",
+    });
+  });
+
   it("keys project icon results by the rendered project view", () => {
     const [iconTarget] = resolveSidebarProjectIconTargets([
       project({

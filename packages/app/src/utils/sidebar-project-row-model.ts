@@ -1,4 +1,5 @@
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
+import { getHostProjectPlacement } from "@/projects/host-project-model";
 
 export interface SidebarProjectHostTarget {
   serverId: string;
@@ -38,9 +39,28 @@ function hostTarget(input: {
   };
 }
 
+/**
+ * The placements an icon can be fetched from. Narrower than `SidebarProjectEntry` on purpose:
+ * a grouped project from the workspace structure carries `workspaceKeys` rather than
+ * `workspaces`, and this only ever reads the hosts.
+ */
+export type ProjectIconSource = Pick<SidebarProjectEntry, "hosts">;
+
+/**
+ * A sidebar project row stands for every host at once, so any usable placement will do and the
+ * first one wins. A surface bound to a single host — the workspace header — passes
+ * `preferredServerId` so the icon comes from the daemon it is actually connected to; asking an
+ * offline host means the query never enables and the icon silently never appears.
+ */
 export function resolveSidebarProjectIconTarget(
-  project: SidebarProjectEntry,
+  project: ProjectIconSource,
+  preferredServerId?: string,
 ): SidebarProjectHostTarget | null {
+  const preferred = preferredServerId ? getHostProjectPlacement(project, preferredServerId) : null;
+  const preferredTarget = preferred ? hostTarget(preferred) : null;
+  if (preferredTarget) {
+    return preferredTarget;
+  }
   for (const host of project.hosts) {
     const target = hostTarget(host);
     if (target) {
