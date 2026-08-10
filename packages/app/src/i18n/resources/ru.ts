@@ -202,6 +202,7 @@ export const ru: TranslationResources = {
       deny: "Отрицать",
       accept: "Принимать",
       implement: "Осуществлять",
+      chooseImplementMode: "Выбрать режим реализации",
       question: "Как бы вы хотели продолжить?",
       proposedPlan: "Предлагаемый план",
     },

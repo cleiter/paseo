@@ -202,6 +202,7 @@ export const ar: TranslationResources = {
       deny: "ينكر",
       accept: "يقبل",
       implement: "ينفذ",
+      chooseImplementMode: "اختر وضع التنفيذ",
       question: "كيف تريد المتابعة؟",
       proposedPlan: "الخطة المقترحة",
     },
