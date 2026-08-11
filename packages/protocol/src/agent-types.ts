@@ -422,10 +422,15 @@ export interface AgentPermissionAction {
  * carried in the request's `metadata.implementModes`. Metadata rather than
  * `actions` so that clients which predate the picker keep rendering the plain
  * two-button plan card instead of one button per mode.
+ *
+ * The provider marks its own fallback with `isDefault` — the mode it applies
+ * for an approval that names none. Clients pick a starting mode from what the
+ * request advertises and never assume an id of their own.
  */
 export interface AgentPlanImplementMode {
   id: string;
   label: string;
+  isDefault?: boolean;
 }
 
 export interface AgentPermissionRequest {

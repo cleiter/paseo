@@ -340,6 +340,13 @@ const DEFAULT_MODES: AgentMode[] = [
 
 const VALID_CLAUDE_MODES = new Set(DEFAULT_MODES.map((mode) => mode.id));
 
+/**
+ * Mode a plan approval lands in when it names none, or names one this request
+ * never offered. Advertised to clients as the `isDefault` entry so the picker
+ * starts here without knowing what any Claude mode id means.
+ */
+const DEFAULT_PLAN_IMPLEMENT_MODE: PermissionMode = "acceptEdits";
+
 const REWIND_COMMAND_NAME = "rewind";
 const REWIND_COMMAND: AgentSlashCommand = {
   name: REWIND_COMMAND_NAME,
@@ -1089,7 +1096,13 @@ function buildClaudePlanImplementModes(env: NodeJS.ProcessEnv): AgentPlanImpleme
       // Auto mode is unusable on these transports and setMode() throws for it.
       (mode) => mode.id !== "auto" || detectIneligibleAutoModeTransport(env) === null,
     )
-    .map((mode) => ({ id: mode.id, label: mode.label }));
+    .map((mode) => {
+      const offered: AgentPlanImplementMode = { id: mode.id, label: mode.label };
+      if (mode.id === DEFAULT_PLAN_IMPLEMENT_MODE) {
+        offered.isDefault = true;
+      }
+      return offered;
+    });
 }
 
 function readClaudePlanImplementModes(request: AgentPermissionRequest): AgentPlanImplementMode[] {
@@ -1115,10 +1128,12 @@ function resolveClaudePlanApprovalMode(
   requestedMode: string | undefined,
 ): PermissionMode {
   if (!requestedMode || !isPermissionMode(requestedMode)) {
-    return "acceptEdits";
+    return DEFAULT_PLAN_IMPLEMENT_MODE;
   }
   const offered = readClaudePlanImplementModes(request);
-  return offered.some((mode) => mode.id === requestedMode) ? requestedMode : "acceptEdits";
+  return offered.some((mode) => mode.id === requestedMode)
+    ? requestedMode
+    : DEFAULT_PLAN_IMPLEMENT_MODE;
 }
 
 interface TimelineFragment {

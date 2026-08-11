@@ -4,14 +4,6 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 
 /**
- * Mode a plan approval falls back to when the daemon offers a picker but the
- * user has never chosen, or their previous choice is no longer on offer (Auto
- * mode disappears on Bedrock/Vertex hosts). Matches the mode the daemon applies
- * for a response that carries no mode at all.
- */
-export const DEFAULT_PLAN_IMPLEMENT_MODE_ID = "acceptEdits";
-
-/**
  * Permission modes this plan request offers as implementation choices.
  *
  * The daemon sends these in `metadata` rather than as extra `actions` because a
@@ -31,11 +23,19 @@ export function getPlanImplementModes(
     if (typeof entry !== "object" || entry === null) {
       return [];
     }
-    const { id, label } = entry as { id?: unknown; label?: unknown };
+    const { id, label, isDefault } = entry as {
+      id?: unknown;
+      label?: unknown;
+      isDefault?: unknown;
+    };
     if (typeof id !== "string" || typeof label !== "string" || id.length === 0) {
       return [];
     }
-    return [{ id, label }];
+    const mode: AgentPlanImplementMode = { id, label };
+    if (isDefault === true) {
+      mode.isDefault = true;
+    }
+    return [mode];
   });
   return modes.length > 1 ? modes : [];
 }
@@ -61,6 +61,10 @@ export function getPlanImplementModeScope(input: {
  * Returns `null` while the remembered choice is still loading from storage, so
  * callers can hold the decision rather than freeze the fallback and silently
  * discard what the user actually picked last time.
+ *
+ * With no usable remembered choice it falls back to whatever the request marked
+ * `isDefault`, and only then to the first entry. The app never names a mode id
+ * of its own: what an id means is the provider's knowledge, not the client's.
  */
 export function resolvePlanImplementMode(
   offeredModes: readonly AgentPlanImplementMode[],
@@ -73,9 +77,5 @@ export function resolvePlanImplementMode(
   if (remembered) {
     return remembered;
   }
-  return (
-    offeredModes.find((mode) => mode.id === DEFAULT_PLAN_IMPLEMENT_MODE_ID) ??
-    offeredModes[0] ??
-    null
-  );
+  return offeredModes.find((mode) => mode.isDefault) ?? offeredModes[0] ?? null;
 }

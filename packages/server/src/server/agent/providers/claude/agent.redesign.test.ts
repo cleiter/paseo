@@ -1095,7 +1095,7 @@ test("plan request keeps the two-button action list and offers the modes in meta
     ]);
     expect(request.metadata?.implementModes).toEqual([
       { id: "default", label: "Always Ask" },
-      { id: "acceptEdits", label: "Accept File Edits" },
+      { id: "acceptEdits", label: "Accept File Edits", isDefault: true },
       { id: "auto", label: "Auto mode" },
       { id: "bypassPermissions", label: "Bypass" },
     ]);
@@ -1124,7 +1124,7 @@ for (const transport of ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"] as
       const { resolution, request } = await openPlanPermission(session, events);
       expect(request.metadata?.implementModes).toEqual([
         { id: "default", label: "Always Ask" },
-        { id: "acceptEdits", label: "Accept File Edits" },
+        { id: "acceptEdits", label: "Accept File Edits", isDefault: true },
         { id: "bypassPermissions", label: "Bypass" },
       ]);
 
