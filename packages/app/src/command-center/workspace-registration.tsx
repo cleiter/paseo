@@ -1,8 +1,15 @@
-import { useMemo, type ReactElement } from "react";
+import { useCallback, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { Columns2, Globe, Rows2, SquarePen, SquareTerminal } from "lucide-react-native";
+import { Columns2, Globe, Rows2, SquarePen, SquareTerminal, Tag } from "lucide-react-native";
 import { getIsElectron } from "@/constants/platform";
 import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
+import {
+  useKnownWorkspaceLabels,
+  useToggleWorkspaceLabel,
+  useWorkspaceLabels,
+  useWorkspaceLabelsSupported,
+} from "@/components/sidebar/workspace-labels/model";
+import { useToast } from "@/contexts/toast-context";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { useGitActionRunner, useGitActions } from "@/git/use-actions";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
@@ -20,6 +27,7 @@ import type { CommandCenterIcon } from "./contributions";
 import { useCommandCenterActions } from "./provider";
 import {
   buildWorkspaceCommandCenterContributions,
+  type WorkspaceCommandCenterLabelSource,
   type WorkspaceCommandCenterShortcuts,
 } from "./workspace-contributions";
 
@@ -30,6 +38,10 @@ const WORKSPACE_COMMAND_CENTER_ICONS = {
   splitRight: getCommandCenterIcon(Columns2),
   splitDown: getCommandCenterIcon(Rows2),
 };
+
+// One icon for both directions. The title already says which way this command goes, and the icon
+// column reads as "what this is about", the same as every other command in the palette.
+const LABEL_ICON = getCommandCenterIcon(Tag);
 
 function staticIcon(element: ReactElement | undefined): CommandCenterIcon | undefined {
   if (!element) return undefined;
@@ -54,6 +66,60 @@ function resolveWorkspaceShortcuts(overrides: ShortcutOverrides): WorkspaceComma
   };
 }
 
+/**
+ * The Label menu's contents as commands, for the workspace you are looking at.
+ *
+ * Null when the host has not got labels, which is the one capability check — a palette that
+ * offered the command and failed on press would be worse than not offering it.
+ */
+function useWorkspaceLabelCommands(
+  serverId: string | null,
+  workspaceId: string | null,
+): WorkspaceCommandCenterLabelSource | null {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const target = useMemo(
+    () => (serverId && workspaceId ? { serverId, workspaceId } : null),
+    [serverId, workspaceId],
+  );
+  const supported = useWorkspaceLabelsSupported(target);
+  const known = useKnownWorkspaceLabels();
+  const carried = useWorkspaceLabels(target);
+  const handleError = useCallback(
+    (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : t("sidebar.workspace.labels.failed"));
+    },
+    [t, toast],
+  );
+  const toggle = useToggleWorkspaceLabel({
+    target,
+    hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
+    onError: handleError,
+  });
+  const title = useCallback(
+    (label: string, isCarried: boolean) =>
+      isCarried
+        ? t("shell.commandCenter.labelRemove", { label })
+        : t("shell.commandCenter.labelAdd", { label }),
+    [t],
+  );
+
+  return useMemo(
+    () =>
+      target && supported
+        ? {
+            known,
+            carried,
+            keywords: t("shell.commandCenter.labelSearchKeywords"),
+            title,
+            icon: LABEL_ICON,
+            toggle,
+          }
+        : null,
+    [carried, known, supported, t, target, title, toggle],
+  );
+}
+
 export function useWorkspaceCommandCenterActions(): void {
   const { t } = useTranslation();
   const selection = useActiveWorkspaceSelection();
@@ -68,11 +134,13 @@ export function useWorkspaceCommandCenterActions(): void {
     icons: GIT_ACTION_ICONS,
   });
   const runGitAction = useGitActionRunner();
+  const workspaceLabels = useWorkspaceLabelCommands(serverId, workspaceId);
 
   const actions = useMemo(
     () =>
       buildWorkspaceCommandCenterContributions({
         gitActions,
+        workspaceLabels,
         labels: {
           section: t("workspace.header.actions.workspaceActions"),
           newAgent: t("workspace.tabs.actions.newAgent"),
@@ -96,7 +164,7 @@ export function useWorkspaceCommandCenterActions(): void {
         },
         runGitAction,
       }),
-    [gitActions, isCompact, overrides, runGitAction, t],
+    [gitActions, isCompact, overrides, runGitAction, t, workspaceLabels],
   );
 
   useCommandCenterActions({

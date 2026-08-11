@@ -64,6 +64,11 @@ import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-regist
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import {
+  checkWorkspaceLabelRename,
+  hasWorkspaceLabel,
+  normalizeWorkspaceLabels,
+} from "@getpaseo/protocol/workspace-labels";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
@@ -141,6 +146,12 @@ import {
   type WorkspaceMutation,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
+import {
+  resolveWorkspaceLabelCatalog,
+  withDerivedLabelColors,
+  type WorkspaceLabelCatalogEntry,
+  type WorkspaceLabelCatalogStore,
+} from "./workspace-label-catalog.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
@@ -446,6 +457,12 @@ export interface SessionOptions {
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  /**
+   * Optional so every harness that predates labels still constructs a Session. Absent means an
+   * in-memory catalog: writes succeed and are readable for the life of the process, which is
+   * what a test wants, rather than silently vanishing.
+   */
+  workspaceLabelCatalog?: WorkspaceLabelCatalogStore;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
@@ -618,6 +635,7 @@ export class Session {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly workspaceLabelCatalog: WorkspaceLabelCatalogStore;
   private readonly filesystem: SessionFileSystem;
   private readonly github: ForgeService;
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
@@ -699,6 +717,7 @@ export class Session {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      workspaceLabelCatalog,
       filesystem,
       scheduleService,
       checkoutDiffManager,
@@ -764,6 +783,7 @@ export class Session {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
+    this.workspaceLabelCatalog = resolveWorkspaceLabelCatalog(workspaceLabelCatalog);
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -1829,6 +1849,7 @@ export class Session {
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceRecoveryMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg) ??
+      this.dispatchWorkspaceMetadataMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
@@ -2153,10 +2174,28 @@ export class Session {
         return this.handleWorkspaceCreateRequest(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  /** User-set workspace metadata: title, pin, labels. Split out to keep each dispatch readable. */
+  private dispatchWorkspaceMetadataMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+      case "workspace.labels.set.request":
+        return this.handleWorkspaceLabelsSetRequest(msg.workspaceId, msg.labels, msg.requestId);
+      case "workspace.labels.catalog.get.request":
+        return this.handleWorkspaceLabelCatalogGetRequest(msg.requestId);
+      case "workspace.labels.catalog.set.request":
+        return this.handleWorkspaceLabelCatalogSetRequest(msg);
+      case "workspace.labels.catalog.remove.request":
+        return this.handleWorkspaceLabelCatalogRemoveRequest(msg);
+      case "workspace.labels.catalog.rename.request":
+        return this.handleWorkspaceLabelCatalogRenameRequest(msg);
       default:
         return undefined;
     }
@@ -3000,6 +3039,287 @@ export class Session {
       });
       emitResponse(false, null, getErrorMessageOr(error, "Failed to pin workspace"));
     }
+  }
+
+  private async handleWorkspaceLabelsSetRequest(
+    workspaceId: string,
+    labels: string[],
+    requestId: string,
+  ): Promise<void> {
+    const logContext = { workspaceId, requestId };
+    this.sessionLogger.info(logContext, "session: workspace.labels.set.request");
+    const emitResponse = (accepted: boolean, applied: string[], error: string | null) => {
+      this.emit({
+        type: "workspace.labels.set.response",
+        payload: { requestId, workspaceId, accepted, labels: applied, error },
+      });
+    };
+
+    try {
+      // Clients may send raw input; the daemon owns the normalized set and echoes back what it
+      // actually stored, so a client that trimmed differently converges on the daemon's answer.
+      const nextLabels = normalizeWorkspaceLabels(labels);
+      const updatedAt = new Date().toISOString();
+      const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
+        ...existing,
+        labels: nextLabels,
+        updatedAt,
+      }));
+      if (!updated) {
+        emitResponse(false, [], "Workspace not found");
+        return;
+      }
+      emitResponse(true, nextLabels, null);
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+    } catch (error) {
+      this.sessionLogger.error(
+        { ...logContext, err: error },
+        "session: workspace.labels.set.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to set workspace labels: ${getErrorMessage(error)}`,
+        },
+      });
+      emitResponse(false, [], getErrorMessageOr(error, "Failed to set workspace labels"));
+    }
+  }
+
+  /**
+   * The catalog every client should see: what has been coloured, plus every label actually in
+   * use so a label nobody has picked a colour for still comes back with one. Assignments are the
+   * source of truth for which labels exist — the catalog only answers what colour they are.
+   */
+  private async listWorkspaceLabelCatalog(): Promise<WorkspaceLabelCatalogEntry[]> {
+    const [catalog, workspaces] = await Promise.all([
+      this.workspaceLabelCatalog.list(),
+      this.workspaceRegistry.list(),
+    ]);
+    const used = workspaces.flatMap((workspace) => workspace.labels ?? []);
+    return withDerivedLabelColors(catalog, used);
+  }
+
+  private async handleWorkspaceLabelCatalogGetRequest(requestId: string): Promise<void> {
+    try {
+      this.emit({
+        type: "workspace.labels.catalog.get.response",
+        payload: {
+          requestId,
+          accepted: true,
+          catalog: await this.listWorkspaceLabelCatalog(),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { requestId, err: error },
+        "session: workspace.labels.catalog.get.request error",
+      );
+      this.emit({
+        type: "workspace.labels.catalog.get.response",
+        payload: {
+          requestId,
+          accepted: false,
+          catalog: [],
+          error: getErrorMessageOr(error, "Failed to read the label catalog"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceLabelCatalogSetRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.labels.catalog.set.request" }>,
+  ): Promise<void> {
+    const { requestId, name, color } = request;
+    this.sessionLogger.info({ requestId, name }, "session: workspace.labels.catalog.set.request");
+    try {
+      await this.workspaceLabelCatalog.set({ name, color });
+      this.emit({
+        type: "workspace.labels.catalog.set.response",
+        payload: {
+          requestId,
+          accepted: true,
+          catalog: await this.listWorkspaceLabelCatalog(),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { requestId, name, err: error },
+        "session: workspace.labels.catalog.set.request error",
+      );
+      this.emit({
+        type: "workspace.labels.catalog.set.response",
+        payload: {
+          requestId,
+          accepted: false,
+          catalog: [],
+          error: getErrorMessageOr(error, "Failed to save the label"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceLabelCatalogRemoveRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.labels.catalog.remove.request" }>,
+  ): Promise<void> {
+    const { requestId, name, detach } = request;
+    this.sessionLogger.info(
+      { requestId, name, detach },
+      "session: workspace.labels.catalog.remove.request",
+    );
+    try {
+      await this.workspaceLabelCatalog.remove(name);
+      // Dropping the colour and dropping the label are separate asks. Without `detach` the
+      // workspaces keep carrying the name and fall back to its derived colour, which is what you
+      // want when you only meant to stop pinning a colour to it.
+      if (detach === true) {
+        await this.detachWorkspaceLabel(name);
+      }
+      this.emit({
+        type: "workspace.labels.catalog.remove.response",
+        payload: {
+          requestId,
+          accepted: true,
+          catalog: await this.listWorkspaceLabelCatalog(),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { requestId, name, err: error },
+        "session: workspace.labels.catalog.remove.request error",
+      );
+      this.emit({
+        type: "workspace.labels.catalog.remove.response",
+        payload: {
+          requestId,
+          accepted: false,
+          catalog: [],
+          error: getErrorMessageOr(error, "Failed to remove the label"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceLabelCatalogRenameRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.labels.catalog.rename.request" }>,
+  ): Promise<void> {
+    const { requestId, from, to } = request;
+    this.sessionLogger.info(
+      { requestId, from, to },
+      "session: workspace.labels.catalog.rename.request",
+    );
+    try {
+      // Every label this daemon knows about, whether or not anyone coloured it. Assignments are
+      // what makes a label exist, so the catalog alone would miss a name in use and let a rename
+      // collide with it.
+      const catalog = await this.listWorkspaceLabelCatalog();
+      const check = checkWorkspaceLabelRename({
+        from,
+        to,
+        existing: catalog.map((entry) => entry.name),
+      });
+      if (!check.ok) {
+        this.emit({
+          type: "workspace.labels.catalog.rename.response",
+          payload: {
+            requestId,
+            accepted: false,
+            catalog,
+            error:
+              check.problem === "nameTaken"
+                ? `A label named ${to.trim()} already exists`
+                : "Label name is empty",
+          },
+        });
+        return;
+      }
+
+      // Assignments first. The catalog is presentation, so a failure between the two leaves the
+      // workspaces renamed and the colour behind — which renders, in the derived colour — rather
+      // than a colour pointing at a name nothing carries.
+      await this.renameWorkspaceLabelAssignments(check.from, check.to);
+      await this.workspaceLabelCatalog.rename({ from: check.from, to: check.to });
+      this.emit({
+        type: "workspace.labels.catalog.rename.response",
+        payload: {
+          requestId,
+          accepted: true,
+          catalog: await this.listWorkspaceLabelCatalog(),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { requestId, from, to, err: error },
+        "session: workspace.labels.catalog.rename.request error",
+      );
+      this.emit({
+        type: "workspace.labels.catalog.rename.response",
+        payload: {
+          requestId,
+          accepted: false,
+          catalog: [],
+          error: getErrorMessageOr(error, "Failed to rename the label"),
+        },
+      });
+    }
+  }
+
+  /** Swaps one label for another on every workspace carrying it, then republishes those. */
+  private async renameWorkspaceLabelAssignments(from: string, to: string): Promise<void> {
+    const workspaces = await this.workspaceRegistry.list();
+    const affected = workspaces.filter((workspace) =>
+      hasWorkspaceLabel(workspace.labels ?? [], from),
+    );
+    if (affected.length === 0) {
+      return;
+    }
+
+    const key = from.toLowerCase();
+    const updatedAt = new Date().toISOString();
+    for (const workspace of affected) {
+      await this.workspaceRegistry.update(workspace.workspaceId, (existing) => ({
+        ...existing,
+        // Through normalize so a workspace that somehow carries both names ends up with one.
+        labels: normalizeWorkspaceLabels(
+          (existing.labels ?? []).map((label) => (label.toLowerCase() === key ? to : label)),
+        ),
+        updatedAt,
+      }));
+    }
+    await this.emitWorkspaceUpdatesForWorkspaceIds(
+      affected.map((workspace) => workspace.workspaceId),
+    );
+  }
+
+  /** Strips one label off every workspace carrying it, then republishes the ones that changed. */
+  private async detachWorkspaceLabel(name: string): Promise<void> {
+    const workspaces = await this.workspaceRegistry.list();
+    const affected = workspaces.filter((workspace) =>
+      hasWorkspaceLabel(workspace.labels ?? [], name),
+    );
+    if (affected.length === 0) {
+      return;
+    }
+
+    const key = name.toLowerCase();
+    const updatedAt = new Date().toISOString();
+    for (const workspace of affected) {
+      await this.workspaceRegistry.update(workspace.workspaceId, (existing) => ({
+        ...existing,
+        labels: (existing.labels ?? []).filter((label) => label.toLowerCase() !== key),
+        updatedAt,
+      }));
+    }
+    await this.emitWorkspaceUpdatesForWorkspaceIds(
+      affected.map((workspace) => workspace.workspaceId),
+    );
   }
 
   private async handleWorkspaceRecoveryInspectRequest(
@@ -4440,6 +4760,7 @@ export class Session {
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
+      labels: workspace.labels,
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -4531,6 +4852,7 @@ export class Session {
       }),
       title: result.workspace.title,
       pinnedAt: result.workspace.pinnedAt,
+      labels: result.workspace.labels,
       archivingAt: null,
       status: "done",
       statusEnteredAt: result.workspace.createdAt,

@@ -70,6 +70,13 @@ export function buildSidebarShortcutSections(input: {
     }
 
     for (const workspace of section.workspaces) {
+      // Label grouping puts a workspace under every label it carries, so the same row can arrive
+      // twice. It gets one number, the first one it earned — nine keys for nine workspaces, not
+      // nine keys for six.
+      if (shortcutIndexByWorkspaceKey.has(workspace.workspaceKey)) {
+        continue;
+      }
+
       if (shortcutTargets.length >= maxShortcuts) {
         break;
       }

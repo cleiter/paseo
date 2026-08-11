@@ -14,6 +14,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  type MenuPageDefinition,
 } from "@/components/ui/dropdown-menu";
 import {
   ContextMenu,
@@ -23,6 +24,14 @@ import {
 } from "@/components/ui/context-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
+import {
+  WorkspaceLabelsSubTrigger,
+  workspaceLabelsMenuPage,
+} from "@/components/sidebar/workspace-labels/menu";
+import {
+  parseWorkspaceKey,
+  useWorkspaceLabelsSupported,
+} from "@/components/sidebar/workspace-labels/model";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
 import {
   workspaceServiceLabelKey,
@@ -121,6 +130,7 @@ function SidebarWorkspaceMenuItems({
   openInFileManagerPath,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
+  const supportsLabels = useWorkspaceLabelsSupportedForKey(workspaceKey);
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
@@ -178,6 +188,7 @@ function SidebarWorkspaceMenuItems({
           {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
         </WorkspaceMenuItem>
       ) : null}
+      {supportsLabels ? <WorkspaceLabelsSubTrigger workspaceKey={workspaceKey} /> : null}
       <OpenInFileManagerMenuItem
         surface={surface}
         path={openInFileManagerPath}
@@ -200,6 +211,32 @@ function SidebarWorkspaceMenuItems({
   );
 }
 
+/**
+ * Labels are the one item in this menu whose host may not know about them, and the menu is handed
+ * a key rather than a workspace — so the capability is resolved from the key here instead of
+ * threaded down as another prop from the sidebar, the way `canPin` is.
+ */
+function useWorkspaceLabelsSupportedForKey(workspaceKey: string): boolean {
+  const target = useMemo(() => parseWorkspaceKey(workspaceKey), [workspaceKey]);
+  return useWorkspaceLabelsSupported(target);
+}
+
+/**
+ * The pages both surfaces hand to the menu engine. Building the page is cheap — it is an element,
+ * not a render — so the row pays nothing for a menu nobody opened.
+ */
+function useWorkspaceMenuPages(workspaceKey: string): MenuPageDefinition[] {
+  const { t } = useTranslation();
+  const supportsLabels = useWorkspaceLabelsSupportedForKey(workspaceKey);
+  return useMemo(
+    () =>
+      supportsLabels
+        ? [workspaceLabelsMenuPage({ workspaceKey, title: t("sidebar.workspace.labels.menu") })]
+        : [],
+    [supportsLabels, t, workspaceKey],
+  );
+}
+
 export function SidebarWorkspaceMenu({
   workspaceKey,
   onCopyPath,
@@ -218,6 +255,7 @@ export function SidebarWorkspaceMenu({
   onOpenChange,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
+  const pages = useWorkspaceMenuPages(workspaceKey);
   return (
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
@@ -229,7 +267,12 @@ export function SidebarWorkspaceMenu({
       >
         {renderTriggerIcon}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={260} sheetTitle={t("sidebar.workspace.actions.menu")}>
+      <DropdownMenuContent
+        align="end"
+        width={260}
+        pages={pages}
+        sheetTitle={t("sidebar.workspace.actions.menu")}
+      >
         <SidebarWorkspaceMenuItems
           surface="dropdown"
           workspaceKey={workspaceKey}
@@ -296,6 +339,7 @@ export function SidebarWorkspaceContextMenu({
     settings: { workspaceTitleSource },
   } = useAppSettings();
   const { t } = useTranslation();
+  const pages = useWorkspaceMenuPages(workspaceKey);
   const pullRequestLabel = workspace.prHint
     ? t("workspace.git.pr.accessibility.pullRequest", {
         number: workspace.prHint.number,
@@ -326,6 +370,7 @@ export function SidebarWorkspaceContextMenu({
       <ContextMenuContent
         align="start"
         width={260}
+        pages={pages}
         testID={`sidebar-workspace-context-menu-${workspaceKey}`}
       >
         <SidebarWorkspaceMenuItems

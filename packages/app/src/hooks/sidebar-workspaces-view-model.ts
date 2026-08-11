@@ -42,6 +42,9 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   // Prefills the rename input and signals whether a reset is available.
   title: string | null;
   pinnedAt?: string | null;
+  // User-assigned label names, already normalized by the daemon. Always an array here: a daemon
+  // too old to know about labels is the same as a workspace with none.
+  labels: string[];
   // Checkout branch (null when not a git checkout or detached HEAD).
   currentBranch: string | null;
   archivingAt: string | null;
@@ -166,6 +169,7 @@ export function createSidebarWorkspaceEntry(input: {
     name: input.workspace.name,
     title: input.workspace.title ?? null,
     pinnedAt: input.workspace.pinnedAt,
+    labels: input.workspace.labels ?? [],
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
@@ -407,6 +411,15 @@ function areSidebarWorkspaceEntriesEqual(
   const keys = Object.keys(left) as Array<keyof SidebarWorkspaceEntry>;
   if (keys.length !== Object.keys(right).length) return false;
   return keys.every((key) => {
+    // Compared by content, not by reference: a descriptor arriving over the wire brings a fresh
+    // array every time, so `Object.is` here would rebuild every row on every workspace update and
+    // the reuse this whole function exists for would never happen.
+    if (key === "labels") {
+      return (
+        left.labels.length === right.labels.length &&
+        left.labels.every((label, index) => label === right.labels[index])
+      );
+    }
     if (key !== "prHint") return Object.is(left[key], right[key]);
     const leftHint = left.prHint;
     const rightHint = right.prHint;

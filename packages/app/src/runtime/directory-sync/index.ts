@@ -18,6 +18,10 @@ import {
   shouldUseLegacyDaemonWorkspaceDirectory,
   stampLegacyWorkspaceIds,
 } from "@/workspace/legacy-daemon-workspaces";
+import {
+  clearWorkspaceLabelCatalog,
+  setWorkspaceLabelCatalog,
+} from "@/stores/workspace-label-catalog-store";
 import type { AgentDirectoryDelta } from "@/utils/agent-directory-sync";
 import { AgentDirectoryReplica } from "./agent-replica";
 import {
@@ -131,6 +135,12 @@ export class DirectorySync {
           this.workspaces.applyDelta(message.payload);
         }
       }),
+      client.on("workspace.labels.catalog.update", (message) => {
+        if (message.type !== "workspace.labels.catalog.update" || !this.isCurrent(client, source)) {
+          return;
+        }
+        setWorkspaceLabelCatalog(this.serverId, message.payload.catalog);
+      }),
       client.on("agent_deleted", (message) => {
         if (message.type === "agent_deleted" && this.isCurrent(client, source)) {
           this.agents.remove(message.payload.agentId);
@@ -145,6 +155,9 @@ export class DirectorySync {
     this.unsubscribe = () => {
       for (const unsubscribe of subscriptions) unsubscribe();
     };
+    // Subscribing only tells us about the next write. A host that has not been recoloured since
+    // this client connected would otherwise never send its catalog at all.
+    void this.hydrateLabelCatalog(client, source);
     return true;
   }
 
@@ -153,6 +166,27 @@ export class DirectorySync {
     this.abortPendingSessionWaits();
     this.unsubscribe?.();
     this.unsubscribe = null;
+    clearWorkspaceLabelCatalog(this.serverId);
+  }
+
+  /**
+   * Held on to across a disconnect on purpose. Going offline does not remove the host's
+   * workspaces from the sidebar, and dropping its colours would repaint every chip on a row that
+   * has not changed. Only losing the host outright clears them — see `dispose`.
+   */
+  private async hydrateLabelCatalog(
+    client: DaemonClient,
+    source: DirectorySourceToken,
+  ): Promise<void> {
+    try {
+      const catalog = await client.getWorkspaceLabelCatalog();
+      if (!this.isCurrent(client, source)) return;
+      setWorkspaceLabelCatalog(this.serverId, catalog);
+    } catch {
+      // A host too old to know about labels answers with an error, and so does one that dropped
+      // mid-request. Neither is worth surfacing: without a catalog every label falls back to its
+      // derived colour, which is a working sidebar rather than a broken one.
+    }
   }
 
   async fetchTimeline(

@@ -33,6 +33,9 @@ const ThemedPencil = withUnistyles(Pencil);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
+// The preview is about the host badge, so it shows a row with nothing else on it.
+const NO_LABELS: readonly string[] = [];
+
 function dropdownTriggerStyle({ pressed }: PressableStateCallbackType) {
   return pressed ? [styles.trigger, styles.triggerPressed] : styles.trigger;
 }
@@ -241,7 +244,13 @@ function BadgePreview({
       <Text style={styles.previewTitle} numberOfLines={1}>
         {t("settings.host.appearance.preview.workspaceName")}
       </Text>
-      <WorkspaceMetaRow hostBadge={hostBadge} prHint={null} serviceSummary={null} />
+      <WorkspaceMetaRow
+        labels={NO_LABELS}
+        projectViewKey={null}
+        hostBadge={hostBadge}
+        prHint={null}
+        serviceSummary={null}
+      />
     </View>
   );
 }

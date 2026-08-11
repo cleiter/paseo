@@ -5,15 +5,23 @@ import { selectCheckSummary, type CheckSummary } from "./check-summary";
 import type { WorkspaceServiceSummary } from "./service-summary";
 
 /**
- * What ends up on the line under a workspace title, in the order it is read: where the
- * workspace lives, what change it belongs to, whether that change is passing, and what it is
- * running. Identity first, then the work, then the work's state.
+ * What ends up on the line under a workspace title, in the order it is read: where the workspace
+ * lives, what change it belongs to, whether that change is passing, what it is running, and what
+ * you filed it under. The work first, then the work's state, then your own annotations.
+ *
+ * Labels come last because they are the only item on the line whose width is not bounded. The host
+ * is a glyph, the change request a number, the checks a word — they cost the same on every row.
+ * Labels cost whatever you called them, times however many you applied, and putting a variable
+ * item first pushes the fixed ones to a different place on every row, so there is no column to
+ * read down. At the end they take the space that is left and the rest of the line stays aligned.
  */
 export type MetaRowItem =
+  | { kind: "labels"; names: readonly string[] }
   | { kind: "host" }
   | { kind: "changeRequest"; hint: PrHint }
   | { kind: "checks"; summary: CheckSummary; label: boolean }
-  | { kind: "services"; summary: WorkspaceServiceSummary };
+  | { kind: "services"; summary: WorkspaceServiceSummary }
+  | { kind: "outsideFilter" };
 
 /**
  * Which peers a row should draw, given what it knows and what the user left switched on.
@@ -26,13 +34,16 @@ export type MetaRowItem =
  * has no badge to hand down, so by the time a row sees one it is meant to be drawn.
  */
 export function selectMetaRowItems(input: {
+  labels: readonly string[];
   hasHostBadge: boolean;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
   visible: SidebarRowItems;
   checksDisplay: SidebarChecksDisplay;
+  outsideFilter: boolean;
 }): MetaRowItem[] {
-  const { hasHostBadge, prHint, serviceSummary, visible, checksDisplay } = input;
+  const { labels, hasHostBadge, prHint, serviceSummary, visible, checksDisplay, outsideFilter } =
+    input;
   const items: MetaRowItem[] = [];
 
   if (hasHostBadge) {
@@ -55,6 +66,18 @@ export function selectMetaRowItems(input: {
 
   if (serviceSummary && visible.services) {
     items.push({ kind: "services", summary: serviceSummary });
+  }
+
+  if (labels.length > 0 && visible.labels) {
+    items.push({ kind: "labels", names: labels });
+  }
+
+  // Last, and not governed by any Show toggle. It is not a fact about the workspace but about why
+  // this row is on screen when the filter says it should not be, and that has to be readable
+  // whatever else the row has been asked to hide. It sits after the labels because they are what
+  // it is usually explaining.
+  if (outsideFilter) {
+    items.push({ kind: "outsideFilter" });
   }
 
   return items;

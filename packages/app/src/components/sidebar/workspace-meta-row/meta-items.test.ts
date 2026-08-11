@@ -17,6 +17,8 @@ const SERVICE: WorkspaceServiceSummary = { name: "web", health: null };
 
 function select(overrides: Partial<Parameters<typeof selectMetaRowItems>[0]> = {}) {
   return selectMetaRowItems({
+    labels: [],
+    outsideFilter: false,
     hasHostBadge: true,
     prHint: PR_HINT,
     serviceSummary: SERVICE,
@@ -81,6 +83,47 @@ describe("selectMetaRowItems", () => {
       summary: { state: "passed", completed: 1, total: 1 },
       label: false,
     });
+  });
+
+  // The labels are the one item whose width is whatever you named them, so they go after the items
+  // that cost the same on every row and the line keeps a column to read down.
+  it("closes with the labels someone filed the workspace under", () => {
+    expect(kinds(select({ labels: ["blocked", "oss"] }))).toEqual([
+      "host",
+      "changeRequest",
+      "checks",
+      "services",
+      "labels",
+    ]);
+  });
+
+  it("carries every label as one item rather than one item each", () => {
+    const labels = select({ labels: ["blocked", "oss"] }).find((item) => item.kind === "labels");
+    expect(labels).toEqual({ kind: "labels", names: ["blocked", "oss"] });
+  });
+
+  it("draws nothing for a workspace with no labels", () => {
+    expect(kinds(select())).not.toContain("labels");
+  });
+
+  it("drops labels and only labels when they are switched off", () => {
+    const items = select({
+      labels: ["blocked"],
+      visible: { ...DEFAULT_SIDEBAR_ROW_ITEMS, labels: false },
+    });
+    expect(kinds(items)).toEqual(["host", "changeRequest", "checks", "services"]);
+  });
+
+  it("says a row is outside the filter, last and whatever else is switched off", () => {
+    const items = select({
+      outsideFilter: true,
+      hasHostBadge: false,
+      prHint: null,
+      serviceSummary: null,
+      visible: { ...DEFAULT_SIDEBAR_ROW_ITEMS, labels: false },
+      labels: ["oss"],
+    });
+    expect(kinds(items)).toEqual(["outsideFilter"]);
   });
 
   it("keeps a change request whose forge reports no checks", () => {

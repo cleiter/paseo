@@ -35,6 +35,7 @@ import {
 import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
+import { SidebarViewSwitcher } from "@/components/sidebar/saved-views/view-switcher";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -51,7 +52,7 @@ import {
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { RetainedPanelActivity } from "@/components/retained-panel";
-import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
+import type { SidebarGroup } from "@/components/sidebar/sidebar-groups";
 import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useHosts } from "@/runtime/host-runtime";
@@ -74,6 +75,9 @@ import {
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
+import { SidebarHiddenRail } from "./sidebar/sidebar-hidden-rail";
+import { SidebarLabelFilterToggle } from "./sidebar/workspace-labels/filter-toggle";
+import { SidebarLabelTrack } from "./sidebar/workspace-labels/label-track";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
@@ -82,7 +86,7 @@ const DEV_BUILD_LABEL = process.env.EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL?.trim() ||
 
 interface SidebarSharedProps {
   theme: SidebarTheme;
-  statusGroups: StatusGroup[];
+  groups: SidebarGroup[];
   pinnedGroups: PinnedSidebarGroups;
   projects: SidebarProjectEntry[];
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -143,7 +147,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     isInitialLoad,
     isRevalidating,
     refreshAll,
-    statusGroups,
+    groups,
     pinnedGroups,
     collapsedProjectKeys,
     toggleProjectCollapsed,
@@ -241,7 +245,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
 
   const sharedProps = {
     theme,
-    statusGroups,
+    groups,
     pinnedGroups,
     projects,
     workspaceEntriesByKey,
@@ -594,7 +598,7 @@ function SidebarFooter({
 
 function MobileSidebar({
   theme,
-  statusGroups,
+  groups,
   pinnedGroups,
   projects,
   workspaceEntriesByKey,
@@ -621,6 +625,11 @@ function MobileSidebar({
 }: MobileSidebarProps) {
   const pathname = usePathname();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
+  // Sits above the scroll rather than inside it, so Search and display preferences stay reachable
+  // however far down the list you are. Hidden on the project-mode empty state, which has its own
+  // Add project button and no list for the row to be a heading for.
+  const showWorkspacesHeader =
+    groupMode !== "project" || pinnedGroups.unpinnedProjects.length > 0 || hasActiveHostFilter;
   const isSessionsActive = pathname.includes("/sessions");
   const isSchedulesActive = pathname.includes("/schedules");
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
@@ -705,24 +714,29 @@ function MobileSidebar({
         {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
         ) : (
-          <SidebarWorkspaceList
-            collapsedProjectKeys={collapsedProjectKeys}
-            onToggleProjectCollapsed={toggleProjectCollapsed}
-            shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-            groupMode={groupMode}
-            statusGroups={statusGroups}
-            pinnedGroups={pinnedGroups}
-            projects={projects}
-            workspaceEntriesByKey={workspaceEntriesByKey}
-            isRefreshing={isManualRefresh && isRevalidating}
-            onRefresh={handleRefresh}
-            onWorkspacePress={handleWorkspacePress}
-            onAddProject={handleOpenProject}
-            parentGestureRef={closeGestureRef}
-            dragGestureHostPresented={dragGestureHostPresented}
-            listHeaderComponent={workspacesSectionHeaderElement}
-          />
+          <>
+            {showWorkspacesHeader ? <WorkspacesSectionHeader /> : null}
+            <SidebarLabelTrack />
+            <SidebarWorkspaceList
+              collapsedProjectKeys={collapsedProjectKeys}
+              onToggleProjectCollapsed={toggleProjectCollapsed}
+              shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+              groupMode={groupMode}
+              groups={groups}
+              pinnedGroups={pinnedGroups}
+              projects={projects}
+              workspaceEntriesByKey={workspaceEntriesByKey}
+              isRefreshing={isManualRefresh && isRevalidating}
+              onRefresh={handleRefresh}
+              onWorkspacePress={handleWorkspacePress}
+              onAddProject={handleOpenProject}
+              parentGestureRef={closeGestureRef}
+              dragGestureHostPresented={dragGestureHostPresented}
+            />
+          </>
         )}
+
+        <SidebarHiddenRail />
 
         <SidebarFooter
           theme={theme}
@@ -740,7 +754,7 @@ function MobileSidebar({
 
 function DesktopSidebar({
   theme,
-  statusGroups,
+  groups,
   pinnedGroups,
   projects,
   workspaceEntriesByKey,
@@ -767,6 +781,11 @@ function DesktopSidebar({
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
   const pathname = usePathname();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
+  // Sits above the scroll rather than inside it, so Search and display preferences stay reachable
+  // however far down the list you are. Hidden on the project-mode empty state, which has its own
+  // Add project button and no list for the row to be a heading for.
+  const showWorkspacesHeader =
+    groupMode !== "project" || pinnedGroups.unpinnedProjects.length > 0 || hasActiveHostFilter;
   const isSessionsActive = pathname.includes("/sessions");
   const isSchedulesActive = pathname.includes("/schedules");
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
@@ -905,21 +924,26 @@ function DesktopSidebar({
         {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
         ) : (
-          <SidebarWorkspaceList
-            collapsedProjectKeys={collapsedProjectKeys}
-            onToggleProjectCollapsed={toggleProjectCollapsed}
-            shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-            groupMode={groupMode}
-            statusGroups={statusGroups}
-            pinnedGroups={pinnedGroups}
-            projects={projects}
-            workspaceEntriesByKey={workspaceEntriesByKey}
-            isRefreshing={isManualRefresh && isRevalidating}
-            onRefresh={handleRefresh}
-            onAddProject={handleOpenProject}
-            listHeaderComponent={workspacesSectionHeaderElement}
-          />
+          <>
+            {showWorkspacesHeader ? <WorkspacesSectionHeader /> : null}
+            <SidebarLabelTrack />
+            <SidebarWorkspaceList
+              collapsedProjectKeys={collapsedProjectKeys}
+              onToggleProjectCollapsed={toggleProjectCollapsed}
+              shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+              groupMode={groupMode}
+              groups={groups}
+              pinnedGroups={pinnedGroups}
+              projects={projects}
+              workspaceEntriesByKey={workspaceEntriesByKey}
+              isRefreshing={isManualRefresh && isRevalidating}
+              onRefresh={handleRefresh}
+              onAddProject={handleOpenProject}
+            />
+          </>
         )}
+
+        <SidebarHiddenRail />
 
         <SidebarCalloutSlot />
 
@@ -959,7 +983,9 @@ function WorkspacesSectionHeader() {
 
   return (
     <View style={styles.workspacesSectionHeader}>
-      <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
+      {/* The heading is the view switcher: applying a view renames the list, so the name of the
+          list is where it belongs. With no views and no filters it is the plain word it was. */}
+      <SidebarViewSwitcher />
       <View style={styles.workspacesSectionActions}>
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
@@ -984,6 +1010,10 @@ function WorkspacesSectionHeader() {
             <IconTooltipContent label="Search" shortcutKeys={commandCenterKeys} />
           </TooltipContent>
         </Tooltip>
+        {/* Between Search and display preferences: the leftmost control finds one workspace, this
+            one narrows the whole list, and the last one changes how the list is drawn. It is also
+            the only one of the three that draws nothing until there is something to filter. */}
+        <SidebarLabelFilterToggle />
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <View>
@@ -998,10 +1028,6 @@ function WorkspacesSectionHeader() {
     </View>
   );
 }
-
-// Stable element so the sidebar list's listHeaderComponent prop keeps identity across
-// renders (WorkspacesSectionHeader takes no props).
-const workspacesSectionHeaderElement = <WorkspacesSectionHeader />;
 
 // Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
 // avoid the "Unable to find node on an unmounted component" crash when Unistyles
@@ -1031,18 +1057,14 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
-    // Rendered inside the scroll's listContent (paddingHorizontal spacing[2]). The title
-    // lands at spacing[2] left to align with project icons. Settings2's painted path stops
-    // inside its 14px SVG, so 4px aligns the ink rather than the SVG box to the row rail.
-    paddingLeft: theme.spacing[2],
-    paddingRight: 4,
+    // Above the scroll rather than in it, so it carries the inset the list's contentContainer
+    // used to give it: spacing[2] of gutter plus spacing[2] more to land the title on the same
+    // rail as the project icons. The right gutter is plain spacing[2] so this header's buttons
+    // are the same 28px squares in the same column as every row's controls below it.
+    paddingLeft: theme.spacing[4],
+    paddingRight: theme.spacing[2],
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[1],
-  },
-  workspacesSectionTitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
   },
   workspacesSectionActions: {
     flexDirection: "row",

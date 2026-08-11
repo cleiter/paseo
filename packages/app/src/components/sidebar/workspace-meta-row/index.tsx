@@ -15,6 +15,11 @@ import type { PrHint } from "@/git/pr-hint";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useSidebarMetaPreferences } from "@/components/sidebar/display-preferences/model";
+import type { WorkspaceLabelColors } from "@/components/sidebar/workspace-labels/catalog";
+import { WorkspaceLabelChip } from "@/components/sidebar/workspace-labels/label-chip";
+import { useWorkspaceLabelColors } from "@/stores/workspace-label-catalog-store";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
+import { matchesSidebarFilter } from "@/components/sidebar/sidebar-filter";
 import type { Theme } from "@/styles/theme";
 import { CheckIndicator } from "./check-indicator";
 import type { CheckSummary, CheckSummaryState } from "./check-summary";
@@ -55,16 +60,36 @@ const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
  * leaves color to mean status.
  */
 export function WorkspaceMetaRow({
+  labels,
+  projectViewKey,
   hostBadge,
   prHint,
   serviceSummary,
 }: {
+  labels: readonly string[];
+  /**
+   * The project this row's workspace belongs to, or null for a row that is not a sidebar row —
+   * the appearance preview in Settings. A preview is not in the sidebar and so is never outside
+   * its filter, and null is what says so.
+   */
+  projectViewKey: string | null;
   hostBadge: HostBadgeModel | null;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
 }) {
   const { rowItems, checksDisplay } = useSidebarMetaPreferences();
+  const labelColors = useWorkspaceLabelColors();
+  const labelFilters = useSidebarViewStore((state) => state.labelFilters);
+  const projectFilters = useSidebarViewStore((state) => state.projectFilters);
+  const labelMatch = useSidebarViewStore((state) => state.labelMatch);
   const items = selectMetaRowItems({
+    labels,
+    outsideFilter:
+      projectViewKey !== null &&
+      !matchesSidebarFilter(
+        { labels, projectViewKey },
+        { projectFilters, labelFilters, labelMatch },
+      ),
     hasHostBadge: hostBadge !== null,
     prHint,
     serviceSummary,
@@ -79,7 +104,7 @@ export function WorkspaceMetaRow({
       {items.map((item, index) => (
         <Fragment key={item.kind}>
           {index > 0 ? <Text style={styles.separator}>·</Text> : null}
-          <MetaItemNode item={item} hostBadge={hostBadge} />
+          <MetaItemNode item={item} hostBadge={hostBadge} labelColors={labelColors} />
         </Fragment>
       ))}
     </View>
@@ -89,10 +114,18 @@ export function WorkspaceMetaRow({
 function MetaItemNode({
   item,
   hostBadge,
+  labelColors,
 }: {
   item: MetaRowItem;
   hostBadge: HostBadgeModel | null;
+  labelColors: WorkspaceLabelColors;
 }): ReactNode {
+  if (item.kind === "labels") {
+    return <LabelsItem names={item.names} colors={labelColors} />;
+  }
+  if (item.kind === "outsideFilter") {
+    return <OutsideFilterItem />;
+  }
   if (item.kind === "host") {
     return hostBadge ? <HostBadge badge={hostBadge} /> : null;
   }
@@ -103,6 +136,57 @@ function MetaItemNode({
     return <ChecksItem summary={item.summary} label={item.label} />;
   }
   return <ServiceItem summary={item.summary} />;
+}
+
+/**
+ * Every label a workspace carries, in the order the daemon stored them. They are one item on the
+ * line rather than several, so the dot separator sits around the group and the chips inside it
+ * only need a gap — a row of dots between chips would read as four items where there is one
+ * subject.
+ *
+ * Marks, not controls. A chip here is 14pt of a row whose whole job is opening the workspace, so
+ * every press aimed at the row that lands a few pixels high filtered the sidebar instead — the
+ * list rearranging under a click meant to open something. Filtering by a label is the track's job,
+ * and the track is one press away above the list.
+ */
+function LabelsItem({ names, colors }: { names: readonly string[]; colors: WorkspaceLabelColors }) {
+  const { t } = useTranslation();
+  const visible = names.slice(0, ROW_LABEL_LIMIT);
+  const overflow = names.length - visible.length;
+  return (
+    <View style={styles.labels} testID="sidebar-workspace-labels">
+      {visible.map((name) => (
+        <WorkspaceLabelChip key={name.toLowerCase()} name={name} colors={colors} />
+      ))}
+      {/*
+        A count, not a control. Pressing it could only widen the row, and a row that changes shape
+        under the pointer is a row you lose your place in. The hover card lists every label at full
+        length, and it opens by pointing at the row rather than by hitting a 14pt target.
+      */}
+      {overflow > 0 ? (
+        <Text
+          style={styles.labelOverflow}
+          accessibilityLabel={t("sidebar.workspace.labels.more", { count: overflow })}
+          testID="sidebar-workspace-labels-overflow"
+        >
+          {`+${overflow}`}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * Says why a row is here when the filter says it should not be. Quiet on purpose — it is an
+ * explanation, not a warning, and the workspace it explains is the one you are looking at.
+ */
+function OutsideFilterItem() {
+  const { t } = useTranslation();
+  return (
+    <Text style={styles.outsideFilter} numberOfLines={1} testID="sidebar-workspace-outside-filter">
+      {t("sidebar.filter.outside")}
+    </Text>
+  );
 }
 
 /**
@@ -253,12 +337,42 @@ function pressableItemStyle({ pressed }: { pressed: boolean }) {
   return [styles.item, pressed && styles.itemPressed];
 }
 
+const LABEL_CHIP_GAP = 3;
+
+/**
+ * How many chips the row draws before it stops and counts.
+ *
+ * The row splits one line between the labels, the host, the change request, its checks and any
+ * running service, so every extra chip is taken out of the width of the others: eight labels came
+ * out as eight chips reading four letters and an ellipsis, which names none of them. Three is what
+ * fits at a length you can read. The rest are not lost — the hover card lists every one at full
+ * length, and it opens by pointing at the row.
+ *
+ * The track above the list is capped at nothing, for the opposite reason: it wraps, so its labels
+ * cost rows rather than legibility.
+ */
+const ROW_LABEL_LIMIT = 3;
+
 const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1.5],
     minWidth: 0,
+  },
+  labels: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: LABEL_CHIP_GAP,
+    minWidth: 0,
+    flexShrink: 1,
+    overflow: "hidden",
+  },
+  labelOverflow: {
+    color: theme.colors.foregroundExtraMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+    flexShrink: 0,
   },
   item: {
     flexDirection: "row",
@@ -269,6 +383,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   itemPressed: {
     opacity: 0.82,
+  },
+  outsideFilter: {
+    color: theme.colors.foregroundExtraMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+    minWidth: 0,
+    flexShrink: 1,
   },
   separator: {
     color: theme.colors.foregroundExtraMuted,

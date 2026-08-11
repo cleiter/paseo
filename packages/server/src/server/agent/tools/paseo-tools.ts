@@ -35,6 +35,12 @@ import { createAgentCommand, type CreateAgentFromMcpInput } from "../create-agen
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { FirstAgentContext } from "../../messages.js";
 import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
+import {
+  MAX_WORKSPACE_LABELS,
+  WORKSPACE_LABEL_COLORS,
+  deriveWorkspaceLabelColor,
+  normalizeWorkspaceLabels,
+} from "@getpaseo/protocol/workspace-labels";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
@@ -71,6 +77,7 @@ import {
 } from "../lifecycle-command.js";
 import type { ForgeService } from "../../../services/forge-service.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceLabelCatalogStore } from "../../workspace-label-catalog.js";
 import type {
   PersistedWorkspaceRecord,
   ProjectRegistry,
@@ -111,6 +118,7 @@ export interface PaseoToolHostDependencies {
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
+  workspaceLabelCatalog?: Pick<WorkspaceLabelCatalogStore, "list">;
   projectRegistry?: Pick<ProjectRegistry, "get" | "list">;
   createDirectoryWorkspace?: (
     cwd: string,
@@ -181,10 +189,40 @@ const WorkspaceAutomationSummarySchema = z.object({
   isolation: z.enum(["local", "worktree"]),
   kind: z.enum(["directory", "local_checkout", "worktree"]),
   title: z.string().nullable(),
+  labels: z.array(z.string()),
 });
+
+const WorkspaceLabelSummarySchema = z.object({
+  name: z.string(),
+  color: z.enum(WORKSPACE_LABEL_COLORS),
+  workspaceCount: z.number(),
+});
+
+const workspaceIdForLabelsSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .optional()
+  .describe("Workspace id to label. Omit to label your current workspace.");
+
+const workspaceLabelNamesSchema = z
+  .array(z.string().trim().min(1))
+  .min(1, "labels is required")
+  .max(MAX_WORKSPACE_LABELS)
+  .describe("Label names. The name is the label's identity; there are no label ids.");
+
+const workspaceLabelChangeOutputSchema = {
+  workspaceId: z.string(),
+  labels: z.array(z.string()).describe("Every label the workspace carries after the change."),
+  changed: z.boolean().describe("False when the workspace already had exactly these labels."),
+  dropped: z
+    .array(z.string())
+    .describe(`Requested labels that did not fit the ${MAX_WORKSPACE_LABELS}-label cap.`),
+};
 
 function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
   return {
+    labels: workspace.labels ?? [],
     workspaceId: workspace.workspaceId,
     projectId: workspace.projectId,
     cwd: workspace.cwd,
@@ -685,6 +723,55 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
 
     return options.ensureWorkspaceForCreate(resolvedCwd);
+  }
+
+  /**
+   * Read the workspace's labels, hand them to the caller, and persist what comes back.
+   *
+   * Both label tools are this function with a different transform, because the interesting part is
+   * the same either way: labels are stored per workspace, so add and remove are both a whole-set
+   * write and both have to start from what is on disk right now rather than from anything the
+   * agent believes. `normalizeWorkspaceLabels` then owns trimming, case-insensitive dedupe, and
+   * the cap, so an agent cannot write a set the app would refuse to draw.
+   *
+   * A write that changes nothing is skipped. `updatedAt` orders the sidebar, so a no-op relabel
+   * that bumped it would reorder the user's list to say nothing.
+   */
+  async function changeWorkspaceLabels(
+    requestedWorkspaceId: string | undefined,
+    change: (current: readonly string[]) => string[],
+  ): Promise<{ workspaceId: string; labels: string[]; changed: boolean }> {
+    if (!options.workspaceRegistry) {
+      throw new Error("Workspace registry is required to label workspaces");
+    }
+    if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
+      throw new Error("Workspace update emitter is required to label workspaces");
+    }
+
+    const workspaceId = resolveWorkspaceIdForRename(requestedWorkspaceId);
+    const existing = await options.workspaceRegistry.get(workspaceId);
+    if (!existing) {
+      throw new Error(`Workspace ${workspaceId} not found`);
+    }
+    if (existing.archivedAt) {
+      throw new Error(`Workspace ${workspaceId} is archived`);
+    }
+
+    const current = existing.labels ?? [];
+    const labels = normalizeWorkspaceLabels(change(current));
+    const changed =
+      labels.length !== current.length || labels.some((label, index) => label !== current[index]);
+    if (!changed) {
+      return { workspaceId, labels, changed: false };
+    }
+
+    await options.workspaceRegistry.upsert({
+      ...existing,
+      labels,
+      updatedAt: new Date().toISOString(),
+    });
+    await options.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+    return { workspaceId, labels, changed: true };
   }
 
   function resolveWorkspaceIdForRename(requestedWorkspaceId?: string): string {
@@ -2170,6 +2257,123 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),
+      };
+    },
+  );
+
+  registerTool(
+    "list_workspace_labels",
+    {
+      title: "List workspace labels",
+      description:
+        "List the workspace labels this host knows, with how many active workspaces carry each. Call this before add_workspace_labels so you reuse an existing label instead of coining a near-duplicate.",
+      inputSchema: {},
+      outputSchema: { labels: z.array(WorkspaceLabelSummarySchema) },
+    },
+    async () => {
+      if (!options.workspaceRegistry) {
+        throw new Error("Workspace registry is not configured");
+      }
+      const workspaces = (await options.workspaceRegistry.list()).filter(
+        (workspace) => !workspace.archivedAt,
+      );
+      const usage = new Map<string, { name: string; workspaceCount: number }>();
+      for (const workspace of workspaces) {
+        for (const label of workspace.labels ?? []) {
+          const key = label.toLowerCase();
+          const entry = usage.get(key);
+          if (entry) {
+            entry.workspaceCount += 1;
+          } else {
+            usage.set(key, { name: label, workspaceCount: 1 });
+          }
+        }
+      }
+
+      // The catalog holds presentation only, and a label can be in use without an entry in it —
+      // it was applied on another host, or its colour write lost a race. So the answer is the
+      // union, and a catalog entry nothing carries still appears: someone made it in Settings to
+      // use it.
+      const catalog = (await options.workspaceLabelCatalog?.list()) ?? [];
+      const labels = catalog.map((entry) => ({
+        name: entry.name,
+        color: entry.color,
+        workspaceCount: usage.get(entry.name.toLowerCase())?.workspaceCount ?? 0,
+      }));
+      for (const [key, entry] of usage) {
+        if (catalog.some((definition) => definition.name.toLowerCase() === key)) {
+          continue;
+        }
+        labels.push({
+          name: entry.name,
+          color: deriveWorkspaceLabelColor(entry.name),
+          workspaceCount: entry.workspaceCount,
+        });
+      }
+
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ labels }),
+      };
+    },
+  );
+
+  registerTool(
+    "add_workspace_labels",
+    {
+      title: "Add workspace labels",
+      description: `Add labels to a workspace, keeping the ones it already carries. Omit workspaceId to label your current workspace. Matching is case-insensitive, so a label the workspace already has keeps its existing spelling. A name nobody has used yet becomes a new label with an automatic colour — call list_workspace_labels first and reuse a name when one fits. A workspace holds at most ${MAX_WORKSPACE_LABELS} labels; anything over the cap comes back in dropped.`,
+      inputSchema: {
+        workspaceId: workspaceIdForLabelsSchema,
+        labels: workspaceLabelNamesSchema,
+      },
+      outputSchema: workspaceLabelChangeOutputSchema,
+    },
+    async ({ workspaceId: requestedWorkspaceId, labels: requestedLabels }) => {
+      const result = await changeWorkspaceLabels(requestedWorkspaceId, (current) => [
+        ...current,
+        ...requestedLabels,
+      ]);
+      const applied = new Set(result.labels.map((label) => label.toLowerCase()));
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          workspaceId: result.workspaceId,
+          labels: result.labels,
+          changed: result.changed,
+          dropped: requestedLabels.filter(
+            (label: string) => !applied.has(label.trim().toLowerCase()),
+          ),
+        }),
+      };
+    },
+  );
+
+  registerTool(
+    "remove_workspace_labels",
+    {
+      title: "Remove workspace labels",
+      description:
+        "Remove labels from a workspace, leaving the rest. Omit workspaceId to unlabel your current workspace. Matching is case-insensitive, and a label the workspace does not carry is not an error. This unlabels the workspace only; the label itself stays available to every other workspace.",
+      inputSchema: {
+        workspaceId: workspaceIdForLabelsSchema,
+        labels: workspaceLabelNamesSchema,
+      },
+      outputSchema: workspaceLabelChangeOutputSchema,
+    },
+    async ({ workspaceId: requestedWorkspaceId, labels: requestedLabels }) => {
+      const removing = new Set(requestedLabels.map((label: string) => label.trim().toLowerCase()));
+      const result = await changeWorkspaceLabels(requestedWorkspaceId, (current) =>
+        current.filter((label) => !removing.has(label.toLowerCase())),
+      );
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          workspaceId: result.workspaceId,
+          labels: result.labels,
+          changed: result.changed,
+          dropped: [],
+        }),
       };
     },
   );

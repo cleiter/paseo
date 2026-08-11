@@ -1062,6 +1062,111 @@ describe("workspace message schemas", () => {
     ).toBe("gitlab");
   });
 
+  test("workspace summary parses without labels and round-trips them when present", () => {
+    const baseWorkspace = {
+      id: "ws-labels",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    } as const;
+
+    // Old daemon: labels omitted -> parses, field absent (the client treats it as no labels).
+    expect(WorkspaceDescriptorPayloadSchema.parse(baseWorkspace).labels).toBeUndefined();
+
+    // New daemon: labels present -> round-trips verbatim, already normalized upstream.
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({ ...baseWorkspace, labels: ["oss", "blocked"] })
+        .labels,
+    ).toEqual(["oss", "blocked"]);
+
+    // An empty set is a valid answer and must not be confused with "old daemon".
+    expect(WorkspaceDescriptorPayloadSchema.parse({ ...baseWorkspace, labels: [] }).labels).toEqual(
+      [],
+    );
+  });
+
+  test("workspace.labels.set request and response round-trip through the session unions", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "workspace.labels.set.request",
+      workspaceId: "ws-1",
+      labels: ["oss", "blocked"],
+      requestId: "req-labels-1",
+    });
+    expect(request).toMatchObject({
+      type: "workspace.labels.set.request",
+      labels: ["oss", "blocked"],
+    });
+
+    const response = SessionOutboundMessageSchema.parse({
+      type: "workspace.labels.set.response",
+      payload: {
+        requestId: "req-labels-1",
+        workspaceId: "ws-1",
+        accepted: true,
+        labels: ["oss", "blocked"],
+        error: null,
+      },
+    });
+    expect(response).toMatchObject({
+      type: "workspace.labels.set.response",
+      payload: { accepted: true, labels: ["oss", "blocked"] },
+    });
+  });
+
+  test("the label catalog round-trips, and an unknown colour stays parseable on the wire", () => {
+    for (const message of [
+      { type: "workspace.labels.catalog.get.request", requestId: "req-cat-1" },
+      {
+        type: "workspace.labels.catalog.set.request",
+        name: "blocked",
+        color: "red",
+        requestId: "req-cat-2",
+      },
+      { type: "workspace.labels.catalog.remove.request", name: "blocked", requestId: "req-cat-3" },
+      // detach is optional: an old client that never sends it still parses on a new daemon.
+      {
+        type: "workspace.labels.catalog.remove.request",
+        name: "blocked",
+        detach: true,
+        requestId: "req-cat-4",
+      },
+    ]) {
+      expect(SessionInboundMessageSchema.parse(message)).toMatchObject({ type: message.type });
+    }
+
+    const response = SessionOutboundMessageSchema.parse({
+      type: "workspace.labels.catalog.get.response",
+      payload: {
+        requestId: "req-cat-1",
+        accepted: true,
+        // A colour this daemon has never heard of has to parse — the wire type is a string on
+        // purpose so a newer client's palette does not become a parse failure on an old host.
+        catalog: [
+          { name: "blocked", color: "red" },
+          { name: "oss", color: "chartreuse" },
+        ],
+        error: null,
+      },
+    });
+    expect(response).toMatchObject({
+      type: "workspace.labels.catalog.get.response",
+      payload: { catalog: [{ name: "blocked" }, { name: "oss", color: "chartreuse" }] },
+    });
+
+    const update = SessionOutboundMessageSchema.parse({
+      type: "workspace.labels.catalog.update",
+      payload: { catalog: [{ name: "blocked", color: "red" }] },
+    });
+    expect(update).toMatchObject({ type: "workspace.labels.catalog.update" });
+  });
+
   test("workspace.create.request rejects old flat backing shape and accepts new source envelope", () => {
     // Old flat shape with backing enum must be rejected.
     const oldFlat = WorkspaceCreateRequestSchema.safeParse({

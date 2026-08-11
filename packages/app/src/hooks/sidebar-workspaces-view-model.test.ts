@@ -451,6 +451,41 @@ describe("shared sidebar workspace model", () => {
     expect(nextEntries.get("srv:two")).not.toBe(previousEntries.get("srv:two"));
   });
 
+  it("keeps a row identity across a redelivered label list and drops it when a label changes", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project", workspaceKeys: ["srv:one"] })],
+    });
+    const one = workspace({
+      id: "one",
+      name: "one",
+      projectId: "project",
+      projectDisplayName: "project",
+    });
+    const build = (
+      labels: string[],
+      previousEntries?: ReturnType<typeof buildSidebarWorkspaceEntries>,
+    ) =>
+      buildSidebarWorkspaceEntries({
+        placements: model.workspaces,
+        sessions: [
+          {
+            serverId: "srv",
+            workspaceAgentActivity: new Map(),
+            workspaces: new Map([["one", { ...one, labels }]]),
+          },
+        ],
+        ...(previousEntries ? { previousEntries } : {}),
+      });
+
+    const previousEntries = build(["blocked"]);
+    // A new array with the same contents, which is what every workspace update off the wire brings.
+    const sameLabels = build(["blocked"], previousEntries);
+    const changedLabels = build(["blocked", "review"], previousEntries);
+
+    expect(sameLabels.get("srv:one")).toBe(previousEntries.get("srv:one"));
+    expect(changedLabels.get("srv:one")).not.toBe(previousEntries.get("srv:one"));
+  });
+
   it("keeps a structurally disambiguated project key in status entries", () => {
     const projectKey = "host:srv:project:prj_a";
     const model = buildSidebarWorkspacePlacementModel({

@@ -173,6 +173,17 @@ describe("translation resources", () => {
     expect(en.workspace.fileActions.addToChat).toBe("Add to chat");
   });
 
+  // Both halves of the switcher label live next to each other in `sidebar.display.views`, and the
+  // sync test above cannot say so: a key filed under the wrong parent in all nine locales at once
+  // is consistent, so only the call site notices, by rendering the key itself.
+  it("files both view switcher labels under the views the switcher shows", () => {
+    expect(en.sidebar.display.views.switcher).toBe("Views: {{name}}");
+    expect(en.sidebar.display.views.switcherEdited).toBe("Views: {{name}} (edited)");
+    for (const locale of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+      expect(typeof locale.sidebar.display.views.switcherEdited).toBe("string");
+    }
+  });
+
   it("keeps local connection fallback errors translated", () => {
     expect(findUntranslatedConnectionErrors()).toEqual([]);
   });

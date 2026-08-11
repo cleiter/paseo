@@ -28,6 +28,7 @@ import {
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { StatusRing } from "@/components/status-ring";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
+import { useReportSidebarRowMenu } from "@/stores/sidebar-row-menu-store";
 
 // The scrim spans more than the kebab so the fade starts left of the diff stat. Solid from
 // SCRIM_SOLID_OFFSET rightward, which keeps the kebab itself off the gradient entirely.
@@ -92,10 +93,15 @@ export function SidebarWorkspaceRowFrame({
     if (!contextMenuOpen) setIsHovered(true);
   }, [contextMenuOpen]);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
-  const handleContextMenuOpenChange = useCallback((open: boolean) => {
-    setContextMenuOpen(open);
-    if (open) setIsHovered(false);
-  }, []);
+  const reportMenu = useReportSidebarRowMenu(workspace.workspaceKey);
+  const handleContextMenuOpenChange = useCallback(
+    (open: boolean) => {
+      setContextMenuOpen(open);
+      if (open) setIsHovered(false);
+      reportMenu(open);
+    },
+    [reportMenu],
+  );
   const hoverHandlers = useMemo(
     () => ({ onPointerEnter: handlePointerEnter, onPointerLeave: handlePointerLeave }),
     [handlePointerEnter, handlePointerLeave],
@@ -192,6 +198,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
           </View>
           <WorkspaceMetaRow
+            labels={workspace.labels}
+            projectViewKey={workspace.projectViewKey}
             hostBadge={hostBadge ?? null}
             prHint={workspace.prHint}
             serviceSummary={serviceSummary}

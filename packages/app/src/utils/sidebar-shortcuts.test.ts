@@ -7,6 +7,7 @@ import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 
 import {
   buildSidebarShortcutModel,
+  buildSidebarShortcutSections,
   buildStatusSidebarShortcutModel,
   getRelativeSidebarShortcutTarget,
 } from "./sidebar-shortcuts";
@@ -32,6 +33,7 @@ function workspace(input: {
     workspaceKind: "checkout",
     name: input.name,
     title: null,
+    labels: [],
     currentBranch: null,
     statusBucket: input.statusBucket ?? "done",
     archivingAt: null,
@@ -254,6 +256,52 @@ describe("buildStatusSidebarShortcutModel", () => {
     expect(model.shortcutTargets).toEqual([{ serverId: "s1", workspaceId: "running" }]);
     expect(model.shortcutIndexByWorkspaceKey.get("s1:needs-input")).toBeUndefined();
     expect(model.shortcutIndexByWorkspaceKey.get("s1:running")).toBe(1);
+  });
+});
+
+describe("buildSidebarShortcutSections", () => {
+  it("gives a workspace one number however many sections it appears in", () => {
+    const repeated = workspace({
+      serverId: "s1",
+      workspaceId: "both",
+      workspaceDirectory: "/repo/both",
+      name: "both",
+    });
+    const other = workspace({
+      serverId: "s1",
+      workspaceId: "other",
+      workspaceDirectory: "/repo/other",
+      name: "other",
+    });
+
+    const model = buildSidebarShortcutSections({
+      sections: [{ workspaces: [repeated] }, { workspaces: [repeated, other] }],
+    });
+
+    expect(model.shortcutTargets).toEqual([
+      { serverId: "s1", workspaceId: "both" },
+      { serverId: "s1", workspaceId: "other" },
+    ]);
+    expect(model.shortcutIndexByWorkspaceKey.get("s1:both")).toBe(1);
+    expect(model.shortcutIndexByWorkspaceKey.get("s1:other")).toBe(2);
+  });
+
+  it("does not spend a slot on a repeat once the limit is reached", () => {
+    const workspaces = Array.from({ length: 9 }, (_, index) =>
+      workspace({
+        serverId: "s1",
+        workspaceId: `ws-${index}`,
+        workspaceDirectory: `/repo/ws-${index}`,
+        name: `ws-${index}`,
+      }),
+    );
+
+    const model = buildSidebarShortcutSections({
+      sections: [{ workspaces }, { workspaces }],
+    });
+
+    expect(model.shortcutTargets).toHaveLength(9);
+    expect(model.shortcutIndexByWorkspaceKey.get("s1:ws-8")).toBe(9);
   });
 });
 

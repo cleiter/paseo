@@ -1,3 +1,4 @@
+import { hasWorkspaceLabel } from "@getpaseo/protocol/workspace-labels";
 import type { GitAction, GitActions } from "@/git/policy";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -29,9 +30,31 @@ export interface WorkspaceCommandCenterShortcuts {
   archiveWorkspace?: ShortcutKey[][];
 }
 
+/**
+ * One command per label the user could put on this workspace, worded for what pressing it does:
+ * a label the workspace already carries offers to take it off, and every other one offers to put
+ * it on. Two commands per label — one to add, one to remove — would mean half the list never does
+ * anything, and the palette would answer a search for a label with a command that is a no-op.
+ *
+ * Absent when the host predates labels. Gating once here is the whole gate; there is no fallback
+ * path (docs/protocol-compatibility.md).
+ */
+export interface WorkspaceCommandCenterLabelSource {
+  /** Every label the user could apply, in the order the Label menu lists them. */
+  known: readonly string[];
+  /** What the workspace carries now, which decides each command's verb. */
+  carried: readonly string[];
+  /** Terms that should find any of these commands, whatever the label is called. */
+  keywords: string;
+  title(label: string, carried: boolean): string;
+  icon?: CommandCenterIcon;
+  toggle(label: string): void;
+}
+
 export interface WorkspaceCommandCenterSource {
   gitActions: GitActions;
   labels: WorkspaceCommandCenterLabels;
+  workspaceLabels: WorkspaceCommandCenterLabelSource | null;
   icons: WorkspaceCommandCenterIcons;
   shortcuts: WorkspaceCommandCenterShortcuts;
   capabilities: {
@@ -171,5 +194,33 @@ export function buildWorkspaceCommandCenterContributions(
     if (action.id === primary?.id) continue;
     contributions.push(buildGitContribution(source, action, 10 + index, "query"));
   }
+  contributions.push(...buildLabelContributions(source));
   return contributions;
+}
+
+function buildLabelContributions(
+  source: WorkspaceCommandCenterSource,
+): CommandCenterContribution[] {
+  const labels = source.workspaceLabels;
+  if (!labels) return [];
+  return labels.known.map((label, index) => {
+    const carried = hasWorkspaceLabel(labels.carried, label);
+    return {
+      id: `labels:${label.toLowerCase()}`,
+      group: "workspace",
+      groupRank: -1,
+      rank: 20 + index,
+      keywords: [labels.keywords, label],
+      // Never default-visible. There is one of these per label, so a handful of them would push
+      // everything the palette opens with off the first screen.
+      visibility: "query",
+      run: () => labels.toggle(label),
+      presentation: {
+        kind: "action",
+        title: labels.title(label, carried),
+        sectionTitle: source.labels.section,
+        icon: labels.icon,
+      },
+    };
+  });
 }

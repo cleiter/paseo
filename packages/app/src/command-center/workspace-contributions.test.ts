@@ -3,6 +3,7 @@ import type { GitAction, GitActions } from "@/git/policy";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import {
   buildWorkspaceCommandCenterContributions,
+  type WorkspaceCommandCenterLabelSource,
   type WorkspaceCommandCenterSource,
 } from "./workspace-contributions";
 
@@ -19,6 +20,20 @@ function gitAction(id: GitAction["id"], label: string): GitAction {
   };
 }
 
+function labelSource(
+  known: readonly string[],
+  carried: readonly string[],
+  toggled: string[],
+): WorkspaceCommandCenterLabelSource {
+  return {
+    known,
+    carried,
+    keywords: "label tag unlabel",
+    title: (label, isCarried) => (isCarried ? `Remove label ${label}` : `Label as ${label}`),
+    toggle: (label) => toggled.push(label),
+  };
+}
+
 function source(gitActions: GitActions): {
   value: WorkspaceCommandCenterSource;
   runGitActions: GitAction[];
@@ -29,6 +44,7 @@ function source(gitActions: GitActions): {
   return {
     value: {
       gitActions,
+      workspaceLabels: null,
       labels: {
         section: "Workspace actions",
         newAgent: "New agent",
@@ -135,5 +151,47 @@ describe("workspace command center contributions", () => {
       "pane:split-down",
     ]);
     expect(contributions.some((item) => item.id.startsWith("git:"))).toBe(false);
+  });
+
+  it("words each label command by whether the workspace carries the label", () => {
+    const fixture = source({ primary: null, secondary: [], menu: [] });
+    fixture.value.workspaceLabels = labelSource(["Blocked", "Review"], ["blocked"], []);
+
+    const contributions = buildWorkspaceCommandCenterContributions(fixture.value);
+
+    expect(
+      contributions
+        .filter((item) => item.id.startsWith("labels:"))
+        .map((item) => ({
+          id: item.id,
+          title: item.presentation.kind === "action" ? item.presentation.title : null,
+        })),
+    ).toEqual([
+      { id: "labels:blocked", title: "Remove label Blocked" },
+      { id: "labels:review", title: "Label as Review" },
+    ]);
+  });
+
+  it("toggles the label it names and never opens the palette by default", () => {
+    const toggled: string[] = [];
+    const fixture = source({ primary: null, secondary: [], menu: [] });
+    fixture.value.workspaceLabels = labelSource(["Blocked", "Review"], [], toggled);
+
+    const contributions = buildWorkspaceCommandCenterContributions(fixture.value).filter((item) =>
+      item.id.startsWith("labels:"),
+    );
+
+    for (const contribution of contributions) contribution.run();
+
+    expect(toggled).toEqual(["Blocked", "Review"]);
+    expect(contributions.every((item) => item.visibility === "query")).toBe(true);
+  });
+
+  it("contributes no label commands when the host cannot store labels", () => {
+    const fixture = source({ primary: null, secondary: [], menu: [] });
+
+    const contributions = buildWorkspaceCommandCenterContributions(fixture.value);
+
+    expect(contributions.some((item) => item.id.startsWith("labels:"))).toBe(false);
   });
 });

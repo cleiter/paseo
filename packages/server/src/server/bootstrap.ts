@@ -144,6 +144,7 @@ import {
   FileBackedWorkspaceRegistry,
   type WorkspaceArchiveContext,
 } from "./workspace-registry.js";
+import { FileBackedWorkspaceLabelCatalog } from "./workspace-label-catalog.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
@@ -801,6 +802,12 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
+  // Daemon-global, not per project: a label means the same thing everywhere on this host, and
+  // there are no project labels.
+  const workspaceLabelCatalog = new FileBackedWorkspaceLabelCatalog(
+    path.join(config.paseoHome, "projects", "workspace-labels.json"),
+    logger,
+  );
   const github = createGitHubService();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
@@ -1248,6 +1255,7 @@ export async function createPaseoDaemon(
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
     workspaceRegistry,
+    workspaceLabelCatalog,
     projectRegistry,
     createDirectoryWorkspace: async (cwd, title, projectId) => {
       const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
@@ -1558,6 +1566,7 @@ export async function createPaseoDaemon(
               browserToolsBroker,
               hubRelationships,
               workspaceSetupRuntime,
+              workspaceLabelCatalog,
             );
             relayRuntime = createRelayRuntime({
               config: {

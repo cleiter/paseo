@@ -46,17 +46,22 @@ export function buildStatusGroups(
     const rows = bucketRows.get(bucket);
     if (!rows || rows.length === 0) continue;
 
-    rows.sort((a, b) => compareStatusRows(a, b, projectNamesByViewKey));
+    rows.sort((a, b) => compareSidebarWorkspaceRows(a, b, projectNamesByViewKey));
     groups.push({ bucket, label: STATUS_BUCKET_LABELS[bucket], rows });
   }
 
   return groups;
 }
 
-function compareStatusRows(
+/**
+ * How rows are ordered inside any flat group, status or label: what changed most recently first,
+ * then a stable tie-break. Label groups reuse it so the two modes read the same way — moving
+ * between them should reorder the headers, not the rows under them.
+ */
+export function compareSidebarWorkspaceRows(
   a: SidebarWorkspaceEntry,
   b: SidebarWorkspaceEntry,
-  projectNamesByViewKey: Map<string, string>,
+  projectNamesByViewKey: ReadonlyMap<string, string>,
 ): number {
   const aTime = a.statusEnteredAt?.getTime() ?? null;
   const bTime = b.statusEnteredAt?.getTime() ?? null;

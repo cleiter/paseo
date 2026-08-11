@@ -10,7 +10,7 @@ import {
   type ProjectStatusBadgeContent,
   type ProjectStatusBadgeDotBucket,
 } from "@/utils/project-status-badge-content";
-import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
+import { projectIconInitialFromDisplayName } from "@/utils/project-display-name";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import {
   STATUS_INDICATOR_ALERT_SIZE,
@@ -124,9 +124,7 @@ export function ProjectStatusIndicator({
   loading?: boolean;
   testID?: string;
 }) {
-  const placeholderInitial = projectIconPlaceholderLabelFromDisplayName(displayName)
-    .charAt(0)
-    .toUpperCase();
+  const placeholderInitial = projectIconInitialFromDisplayName(displayName);
   // A row that's still starting up and a row that's working are both "busy", and at this size
   // there's no room to draw the difference — so `loading` just resolves to the running bucket
   // and they share one badge.

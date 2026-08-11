@@ -940,6 +940,76 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceLabelsSetRequestSchema = z.object({
+  type: z.literal("workspace.labels.set.request"),
+  workspaceId: z.string(),
+  // The complete label set for this workspace; an empty array clears them. The daemon
+  // normalizes (trim, dedupe, cap) before persisting, so clients may send raw input.
+  labels: z.array(z.string()),
+  requestId: z.string(),
+});
+
+/**
+ * One label's presentation, as the daemon stores it. The name is the identity — see
+ * `workspace-labels.ts` — so this carries no id, and `color` is a palette key rather than a hex
+ * because only the client knows whether it is drawing on a light or a dark surface.
+ *
+ * The colour is a plain string on the wire, not an enum: an older daemon must be able to parse a
+ * colour a newer client invented, and narrowing it here would make that a parse failure instead
+ * of a fallback. Readers resolve unknown values through `normalizeWorkspaceLabelCatalog`.
+ */
+export const WorkspaceLabelDefinitionSchema = z.object({
+  name: z.string(),
+  color: z.string(),
+  /**
+   * True when nobody picked this colour and the daemon filled it in from the name. The catalog
+   * response lists every label in use, so without this a client cannot tell a colour someone
+   * chose from a fallback — and "reset the colour" would offer to undo a choice that was never
+   * made. Absent means chosen, which is what an older daemon's entries are.
+   */
+  derived: z.boolean().optional(),
+});
+
+export const WorkspaceLabelCatalogSetRequestSchema = z.object({
+  type: z.literal("workspace.labels.catalog.set.request"),
+  // Upsert by name. Sending a name the catalog already holds recolours it.
+  name: z.string(),
+  color: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceLabelCatalogRemoveRequestSchema = z.object({
+  type: z.literal("workspace.labels.catalog.remove.request"),
+  name: z.string(),
+  // Whether to also strip the label off every workspace carrying it. False leaves the
+  // assignments alone, which then render with their derived colour.
+  detach: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+/**
+ * Renames a label everywhere on this daemon: every workspace carrying `from` carries `to`
+ * afterwards, and the colour moves with it.
+ *
+ * The sweep is the daemon's rather than the client's because the name is the identity — there is
+ * no id to repoint, so a rename has to rewrite the name on every workspace that holds it, and the
+ * daemon is the one holding them.
+ *
+ * Rejected when `to` is already a label, rather than merging the two. A merge is a different and
+ * irreversible operation and it should have to be asked for by name.
+ */
+export const WorkspaceLabelCatalogRenameRequestSchema = z.object({
+  type: z.literal("workspace.labels.catalog.rename.request"),
+  from: z.string(),
+  to: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceLabelCatalogGetRequestSchema = z.object({
+  type: z.literal("workspace.labels.catalog.get.request"),
+  requestId: z.string(),
+});
+
 export const WorkspaceRecoveryInspectRequestSchema = z.object({
   type: z.literal("workspace.recovery.inspect.request"),
   workspaceId: z.string(),
@@ -1706,6 +1776,65 @@ export const WorkspacePinSetResponsePayloadSchema = z.object({
 export const WorkspacePinSetResponseSchema = z.object({
   type: z.literal("workspace.pin.set.response"),
   payload: WorkspacePinSetResponsePayloadSchema,
+});
+
+export const WorkspaceLabelsSetResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  workspaceId: z.string(),
+  accepted: z.boolean(),
+  // The normalized set the daemon actually stored, which may differ from what was sent.
+  labels: z.array(z.string()),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceLabelsSetResponseSchema = z.object({
+  type: z.literal("workspace.labels.set.response"),
+  payload: WorkspaceLabelsSetResponsePayloadSchema,
+});
+
+/**
+ * Every catalog response carries the whole catalog rather than the entry that changed. It is a
+ * short list, and a client holding one host's catalog beside another's needs to replace rather
+ * than patch — a delta would make the merged view depend on the order two hosts happened to
+ * answer in.
+ */
+export const WorkspaceLabelCatalogResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  accepted: z.boolean(),
+  catalog: z.array(WorkspaceLabelDefinitionSchema),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceLabelCatalogGetResponseSchema = z.object({
+  type: z.literal("workspace.labels.catalog.get.response"),
+  payload: WorkspaceLabelCatalogResponsePayloadSchema,
+});
+
+export const WorkspaceLabelCatalogSetResponseSchema = z.object({
+  type: z.literal("workspace.labels.catalog.set.response"),
+  payload: WorkspaceLabelCatalogResponsePayloadSchema,
+});
+
+export const WorkspaceLabelCatalogRemoveResponseSchema = z.object({
+  type: z.literal("workspace.labels.catalog.remove.response"),
+  payload: WorkspaceLabelCatalogResponsePayloadSchema,
+});
+
+/** `accepted: false` with an `error` is how a name that is already taken comes back. */
+export const WorkspaceLabelCatalogRenameResponseSchema = z.object({
+  type: z.literal("workspace.labels.catalog.rename.response"),
+  payload: WorkspaceLabelCatalogResponsePayloadSchema,
+});
+
+/**
+ * Pushed to every session when the catalog changes, so recolouring a label on your laptop
+ * repaints the chips on your phone without it having asked. Uncorrelated, hence no requestId.
+ */
+export const WorkspaceLabelCatalogUpdateSchema = z.object({
+  type: z.literal("workspace.labels.catalog.update"),
+  payload: z.object({
+    catalog: z.array(WorkspaceLabelDefinitionSchema),
+  }),
 });
 
 export const WorkspaceRecoveryStateSchema = z.discriminatedUnion("kind", [
@@ -2723,6 +2852,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceLabelsSetRequestSchema,
+  WorkspaceLabelCatalogGetRequestSchema,
+  WorkspaceLabelCatalogSetRequestSchema,
+  WorkspaceLabelCatalogRemoveRequestSchema,
+  WorkspaceLabelCatalogRenameRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
@@ -3078,6 +3212,12 @@ export const ServerInfoStatusPayloadSchema = z
         worktreeRestore: z.boolean().optional(),
         // COMPAT(workspaceRecovery): added in v0.1.105, remove after 2027-01-11 once daemon floor >= v0.1.105.
         workspaceRecovery: z.boolean().optional(),
+        // COMPAT(workspaceLabels): added in v0.3.2, drop the gate when floor >= v0.3.2.
+        workspaceLabels: z.boolean().optional(),
+        // COMPAT(workspaceLabelRename): added in v0.3.2, drop the gate when floor >= v0.3.2.
+        // Its own flag rather than riding on `workspaceLabels`: a daemon that shipped labels
+        // before the rename RPC existed advertises the first and cannot answer the second.
+        workspaceLabelRename: z.boolean().optional(),
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
@@ -3431,6 +3571,10 @@ export const WorkspaceDescriptorPayloadSchema = z
     title: z.string().nullable().optional(),
     // COMPAT(workspacePinning): added in v0.1.107, remove optional after 2027-01-12.
     pinnedAt: z.string().nullable().optional(),
+    // COMPAT(workspaceLabels): added in v0.3.2, remove optional after 2027-02-10. User-assigned
+    // label names, already normalized by the daemon. Absent from old daemons; clients treat
+    // missing and empty as the same thing.
+    labels: z.array(z.string()).optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     // Best-effort workspace status entry timestamp. Old daemons omit the
@@ -5733,6 +5877,12 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspaceLabelsSetResponseSchema,
+  WorkspaceLabelCatalogGetResponseSchema,
+  WorkspaceLabelCatalogSetResponseSchema,
+  WorkspaceLabelCatalogRemoveResponseSchema,
+  WorkspaceLabelCatalogRenameResponseSchema,
+  WorkspaceLabelCatalogUpdateSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
   WaitForFinishResponseMessageSchema,
@@ -5931,6 +6081,24 @@ export type WorkspaceTitleSetResponsePayload = z.infer<
   typeof WorkspaceTitleSetResponsePayloadSchema
 >;
 export type WorkspacePinSetResponse = z.infer<typeof WorkspacePinSetResponseSchema>;
+export type WorkspaceLabelsSetResponse = z.infer<typeof WorkspaceLabelsSetResponseSchema>;
+export type WorkspaceLabelDefinitionPayload = z.infer<typeof WorkspaceLabelDefinitionSchema>;
+export type WorkspaceLabelCatalogResponsePayload = z.infer<
+  typeof WorkspaceLabelCatalogResponsePayloadSchema
+>;
+export type WorkspaceLabelCatalogGetResponse = z.infer<
+  typeof WorkspaceLabelCatalogGetResponseSchema
+>;
+export type WorkspaceLabelCatalogSetResponse = z.infer<
+  typeof WorkspaceLabelCatalogSetResponseSchema
+>;
+export type WorkspaceLabelCatalogRemoveResponse = z.infer<
+  typeof WorkspaceLabelCatalogRemoveResponseSchema
+>;
+export type WorkspaceLabelCatalogRenameResponse = z.infer<
+  typeof WorkspaceLabelCatalogRenameResponseSchema
+>;
+export type WorkspaceLabelCatalogUpdate = z.infer<typeof WorkspaceLabelCatalogUpdateSchema>;
 export type WorkspacePinSetResponsePayload = z.infer<typeof WorkspacePinSetResponsePayloadSchema>;
 export type WorkspaceRecoveryState = z.infer<typeof WorkspaceRecoveryStateSchema>;
 export type WorkspaceRecoveryInspectResponse = z.infer<
@@ -6077,6 +6245,15 @@ export type ProjectIconSetRequest = z.infer<typeof ProjectIconSetRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
+export type WorkspaceLabelsSetRequest = z.infer<typeof WorkspaceLabelsSetRequestSchema>;
+export type WorkspaceLabelCatalogGetRequest = z.infer<typeof WorkspaceLabelCatalogGetRequestSchema>;
+export type WorkspaceLabelCatalogSetRequest = z.infer<typeof WorkspaceLabelCatalogSetRequestSchema>;
+export type WorkspaceLabelCatalogRemoveRequest = z.infer<
+  typeof WorkspaceLabelCatalogRemoveRequestSchema
+>;
+export type WorkspaceLabelCatalogRenameRequest = z.infer<
+  typeof WorkspaceLabelCatalogRenameRequestSchema
+>;
 export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryInspectRequestSchema>;
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;

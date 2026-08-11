@@ -23,6 +23,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { CommandCenter } from "@/command-center/command-center";
 import { CommandCenterRootActions } from "@/command-center/root-registration";
+import { CommandCenterSavedViewActions } from "@/command-center/saved-view-registration";
 import { CommandCenterProvider } from "@/command-center/provider";
 import { CommandCenterWorkspaceActions } from "@/command-center/workspace-registration";
 import { AddProjectFlowHost } from "@/components/add-project-flow-host";
@@ -32,6 +33,8 @@ import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
+import { WorkspaceLabelDialogHost } from "@/components/sidebar/workspace-labels/edit-dialog";
+import { SavedViewEditorHost } from "@/components/sidebar/saved-views/editor-dialog";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { WindowSidebarMenuToggle } from "@/components/headers/menu-header";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
@@ -587,6 +590,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <UpdateCalloutSource />
       <WorktreeSetupCalloutSource />
       <CommandCenterRootActions />
+      <CommandCenterSavedViewActions />
       <CommandCenterWorkspaceActions />
       <WorkspacePinShortcutHandler />
       <CommandCenter />
@@ -595,6 +599,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <ProviderSettingsHost />
       <WorkspaceSetupDialog />
       <KeyboardShortcutsDialog />
+      <WorkspaceLabelDialogHost />
       <AppDiagnosticHost />
       <QuittingOverlay />
     </View>
@@ -627,6 +632,10 @@ function SidebarChrome({
     <SidebarModelProvider active={active}>
       {mounted ? <LeftSidebar active={active} /> : null}
       <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
+      {/* Inside the provider rather than beside the other dialog hosts: the editor lists the
+          projects a view can filter by, and those come from the sidebar model. It renders into a
+          portal, so where it sits in the tree is not where it appears. */}
+      <SavedViewEditorHost />
     </SidebarModelProvider>
   );
 }

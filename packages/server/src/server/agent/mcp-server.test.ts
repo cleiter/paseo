@@ -8,6 +8,10 @@ import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 
+import {
+  deriveWorkspaceLabelColor,
+  type WorkspaceLabelDefinition,
+} from "@getpaseo/protocol/workspace-labels";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
@@ -3825,6 +3829,200 @@ describe("update_agent MCP tool", () => {
 
     expect(spies.agentStorage.get).not.toHaveBeenCalled();
     expect(spies.agentManager.updateAgentMetadata).not.toHaveBeenCalled();
+  });
+});
+
+describe("workspace label MCP tools", () => {
+  const logger = createTestLogger();
+
+  function createLabelToolDeps(input: {
+    workspaces: PersistedWorkspaceRecord[];
+    callerWorkspaceId?: string;
+  }) {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const workspaces = new Map(
+      input.workspaces.map((workspace) => [workspace.workspaceId, workspace]),
+    );
+    const upsertedWorkspaces: PersistedWorkspaceRecord[] = [];
+    const emittedWorkspaceIds: string[][] = [];
+    if (input.callerWorkspaceId) {
+      spies.agentManager.getAgent.mockReturnValue(
+        createManagedAgent({
+          id: "parent-agent",
+          cwd: REPO_CWD,
+          workspaceId: input.callerWorkspaceId,
+        }),
+      );
+    }
+    return {
+      upsertedWorkspaces,
+      emittedWorkspaceIds,
+      workspaces,
+      createServer: (catalog?: WorkspaceLabelDefinition[]) =>
+        createAgentMcpServer({
+          agentManager,
+          agentStorage,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          workspaceRegistry: {
+            get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+            list: async () => Array.from(workspaces.values()),
+            upsert: async (record) => {
+              upsertedWorkspaces.push(record);
+              workspaces.set(record.workspaceId, record);
+            },
+          },
+          ...(catalog ? { workspaceLabelCatalog: { list: async () => catalog } } : {}),
+          emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
+            emittedWorkspaceIds.push(Array.from(workspaceIds));
+          },
+          callerAgentId: "parent-agent",
+          logger,
+        }),
+    };
+  }
+
+  function createLabelledWorkspace(input: {
+    workspaceId: string;
+    labels: string[];
+    archivedAt?: string;
+  }): PersistedWorkspaceRecord {
+    return createPersistedWorkspaceRecord({
+      workspaceId: input.workspaceId,
+      projectId: "proj_parent",
+      cwd: REPO_CWD,
+      kind: "local_checkout",
+      displayName: "main",
+      labels: input.labels,
+      ...(input.archivedAt ? { archivedAt: input.archivedAt } : {}),
+      createdAt: "2026-07-03T09:00:00.000Z",
+      updatedAt: "2026-07-03T09:00:00.000Z",
+    });
+  }
+
+  it("adds labels to the caller workspace without dropping the ones it has", async () => {
+    const deps = createLabelToolDeps({
+      workspaces: [createLabelledWorkspace({ workspaceId: "wks_parent", labels: ["review"] })],
+      callerWorkspaceId: "wks_parent",
+    });
+    const tool = registeredTool(await deps.createServer(), "add_workspace_labels");
+
+    const response = await invokeToolWithParsedInput(tool, { labels: ["blocked"] });
+
+    expect(response.structuredContent).toEqual({
+      workspaceId: "wks_parent",
+      labels: ["review", "blocked"],
+      changed: true,
+      dropped: [],
+    });
+    expect(deps.emittedWorkspaceIds).toEqual([["wks_parent"]]);
+  });
+
+  it("keeps the spelling already stored when the same label is added again", async () => {
+    const deps = createLabelToolDeps({
+      workspaces: [createLabelledWorkspace({ workspaceId: "wks_parent", labels: ["Blocked"] })],
+      callerWorkspaceId: "wks_parent",
+    });
+    const tool = registeredTool(await deps.createServer(), "add_workspace_labels");
+
+    const response = await invokeToolWithParsedInput(tool, { labels: ["blocked"] });
+
+    expect(response.structuredContent).toEqual({
+      workspaceId: "wks_parent",
+      labels: ["Blocked"],
+      changed: false,
+      dropped: [],
+    });
+    // A no-op write would bump updatedAt, which is what orders the sidebar.
+    expect(deps.upsertedWorkspaces).toEqual([]);
+    expect(deps.emittedWorkspaceIds).toEqual([]);
+  });
+
+  it("reports labels the ten-label cap refused instead of silently dropping them", async () => {
+    const existing = Array.from({ length: 10 }, (_, index) => `label-${index}`);
+    const deps = createLabelToolDeps({
+      workspaces: [createLabelledWorkspace({ workspaceId: "wks_parent", labels: existing })],
+      callerWorkspaceId: "wks_parent",
+    });
+    const tool = registeredTool(await deps.createServer(), "add_workspace_labels");
+
+    const response = await invokeToolWithParsedInput(tool, { labels: ["overflow"] });
+
+    expect(response.structuredContent).toEqual({
+      workspaceId: "wks_parent",
+      labels: existing,
+      changed: false,
+      dropped: ["overflow"],
+    });
+  });
+
+  it("removes labels case-insensitively and ignores ones the workspace never had", async () => {
+    const deps = createLabelToolDeps({
+      workspaces: [
+        createLabelledWorkspace({ workspaceId: "wks_other", labels: ["Blocked", "review"] }),
+      ],
+      callerWorkspaceId: "wks_other",
+    });
+    const tool = registeredTool(await deps.createServer(), "remove_workspace_labels");
+
+    const response = await invokeToolWithParsedInput(tool, {
+      workspaceId: "wks_other",
+      labels: ["blocked", "never-applied"],
+    });
+
+    expect(response.structuredContent).toEqual({
+      workspaceId: "wks_other",
+      labels: ["review"],
+      changed: true,
+      dropped: [],
+    });
+    expect(deps.emittedWorkspaceIds).toEqual([["wks_other"]]);
+  });
+
+  it("refuses to label an archived workspace", async () => {
+    const deps = createLabelToolDeps({
+      workspaces: [
+        createLabelledWorkspace({
+          workspaceId: "wks_archived",
+          labels: [],
+          archivedAt: "2026-07-03T10:00:00.000Z",
+        }),
+      ],
+      callerWorkspaceId: "wks_archived",
+    });
+    const tool = registeredTool(await deps.createServer(), "add_workspace_labels");
+
+    await expect(invokeToolWithParsedInput(tool, { labels: ["blocked"] })).rejects.toThrow(
+      "Workspace wks_archived is archived",
+    );
+    expect(deps.upsertedWorkspaces).toEqual([]);
+  });
+
+  it("lists catalog labels and labels only workspaces carry, with usage counts", async () => {
+    const deps = createLabelToolDeps({
+      workspaces: [
+        createLabelledWorkspace({ workspaceId: "wks_a", labels: ["Blocked", "from-other-host"] }),
+        createLabelledWorkspace({ workspaceId: "wks_b", labels: ["blocked"] }),
+      ],
+    });
+    const server = await deps.createServer([
+      { name: "Blocked", color: "red" },
+      { name: "unused", color: "teal" },
+    ]);
+    const tool = registeredTool(server, "list_workspace_labels");
+
+    const response = await invokeToolWithParsedInput(tool, {});
+
+    expect(response.structuredContent).toEqual({
+      labels: [
+        { name: "Blocked", color: "red", workspaceCount: 2 },
+        { name: "unused", color: "teal", workspaceCount: 0 },
+        {
+          name: "from-other-host",
+          color: deriveWorkspaceLabelColor("from-other-host"),
+          workspaceCount: 1,
+        },
+      ],
+    });
   });
 });
 

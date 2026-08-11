@@ -702,6 +702,7 @@ describe("WorkspaceReconciliationService", () => {
       baseBranch: null,
       isPaseoOwnedWorktree: false,
       mainRepoRoot: null,
+      labels: [],
       createdAt: timestamp,
       updatedAt: expect.any(String),
       archivedAt: expect.any(String),

@@ -100,6 +100,7 @@ import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
   WorkspaceCreateRequest,
+  WorkspaceLabelDefinitionPayload,
   WorkspaceRecoveryState,
 } from "@getpaseo/protocol/messages";
 import type {
@@ -260,6 +261,13 @@ export type DaemonEvent =
   | {
       type: "project.update";
       payload: Extract<SessionOutboundMessage, { type: "project.update" }>["payload"];
+    }
+  | {
+      type: "workspace.labels.catalog.update";
+      payload: Extract<
+        SessionOutboundMessage,
+        { type: "workspace.labels.catalog.update" }
+      >["payload"];
     }
   | {
       type: "workspace_setup_progress";
@@ -2600,6 +2608,113 @@ export class DaemonClient {
       throw new Error(payload.error ?? "setWorkspacePinned rejected");
     }
     return { pinnedAt: payload.pinnedAt };
+  }
+
+  /**
+   * Replaces the workspace's whole label set. The daemon normalizes (trim, dedupe, cap) and
+   * returns what it actually stored, so callers should adopt the returned array rather than the
+   * one they sent.
+   */
+  async setWorkspaceLabels(
+    workspaceId: string,
+    labels: readonly string[],
+    requestId?: string,
+  ): Promise<{ labels: string[] }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.labels.set.request",
+        workspaceId,
+        labels: [...labels],
+      },
+      responseType: "workspace.labels.set.response",
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspaceLabels rejected");
+    }
+    return { labels: payload.labels };
+  }
+
+  /**
+   * This host's label catalog: which colour each label is drawn in. Every catalog call returns
+   * the whole list, because a client holding two hosts' catalogs merges them by name and a delta
+   * would make that merge depend on which host answered first.
+   */
+  async getWorkspaceLabelCatalog(requestId?: string): Promise<WorkspaceLabelDefinitionPayload[]> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.labels.catalog.get.response">({
+        requestId,
+        message: { type: "workspace.labels.catalog.get.request" },
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "getWorkspaceLabelCatalog rejected");
+    }
+    return payload.catalog;
+  }
+
+  /** Upsert by name; sending a name the catalog already holds recolours it. */
+  async setWorkspaceLabelColor(
+    name: string,
+    color: string,
+    requestId?: string,
+  ): Promise<WorkspaceLabelDefinitionPayload[]> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.labels.catalog.set.response">({
+        requestId,
+        message: { type: "workspace.labels.catalog.set.request", name, color },
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspaceLabelColor rejected");
+    }
+    return payload.catalog;
+  }
+
+  /**
+   * Drops a label's colour. `detach` also strips the label off every workspace carrying it —
+   * without it the assignments survive and fall back to the derived colour, which is what you
+   * want when you only meant to stop pinning a colour to the name.
+   */
+  async removeWorkspaceLabel(
+    name: string,
+    options?: { detach?: boolean; requestId?: string },
+  ): Promise<WorkspaceLabelDefinitionPayload[]> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.labels.catalog.remove.response">(
+        {
+          requestId: options?.requestId,
+          message: {
+            type: "workspace.labels.catalog.remove.request",
+            name,
+            ...(options?.detach === undefined ? {} : { detach: options.detach }),
+          },
+        },
+      );
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "removeWorkspaceLabel rejected");
+    }
+    return payload.catalog;
+  }
+
+  /**
+   * Renames a label on this daemon: every workspace carrying `from` carries `to` afterwards, and
+   * the colour moves with it. Rejected when `to` is already a label — that would be a merge.
+   */
+  async renameWorkspaceLabel(
+    from: string,
+    to: string,
+    requestId?: string,
+  ): Promise<WorkspaceLabelDefinitionPayload[]> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.labels.catalog.rename.response">(
+        {
+          requestId,
+          message: { type: "workspace.labels.catalog.rename.request", from, to },
+        },
+      );
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "renameWorkspaceLabel rejected");
+    }
+    return payload.catalog;
   }
 
   async inspectWorkspaceRecovery(
@@ -5773,6 +5888,8 @@ export class DaemonClient {
         };
       case "project.update":
         return { type: "project.update", payload: msg.payload };
+      case "workspace.labels.catalog.update":
+        return { type: "workspace.labels.catalog.update", payload: msg.payload };
       case "workspace_setup_progress":
         return {
           type: "workspace_setup_progress",

@@ -49,9 +49,21 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 | Tool                | Function                                                                                              |
 | ------------------- | ----------------------------------------------------------------------------------------------------- |
 | `create_workspace`  | Create a local or worktree-isolated workspace. Worktrees can branch off, check out a branch, or a PR. |
-| `list_workspaces`   | List active workspaces and their directories and isolation.                                           |
+| `list_workspaces`   | List active workspaces with their directories, isolation, and labels.                                 |
 | `rename_workspace`  | Change the user-visible name of the current or specified workspace.                                   |
 | `archive_workspace` | Archive a workspace and the sessions it owns.                                                         |
+
+### Workspace labels
+
+Labels are the sidebar's filter facet. A label is a name — there are no label ids — so applying one is a matter of getting the name right.
+
+| Tool                      | Function                                                            |
+| ------------------------- | ------------------------------------------------------------------- |
+| `list_workspace_labels`   | List the labels this host knows and how many workspaces carry each. |
+| `add_workspace_labels`    | Add labels to a workspace, keeping the ones it already has.         |
+| `remove_workspace_labels` | Remove labels from a workspace, leaving the rest.                   |
+
+Both write tools default to the calling agent's workspace, match existing labels case-insensitively, and cap a workspace at ten labels. A name nothing carries yet becomes a new label with an automatic colour, so call `list_workspace_labels` first and reuse a name when one fits. Removing a label from a workspace does not delete the label.
 
 For worktree isolation, `create_workspace` accepts the same useful choices as the app: branch off from a base, check out an existing branch, or check out a pull request. The worktree remains an implementation detail of the workspace lifecycle.
 

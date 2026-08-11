@@ -303,6 +303,23 @@ initializing → idle ⇄ running
 - Events stream to connected clients in real time; correctness is backed by authoritative timeline fetches and paged-to-completion catch-up.
 - Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json` (timeline rows live alongside the record). That storage path is derived from `cwd`, not from workspace id.
 
+## Sidebar filtering and grouping
+
+Everything that hides a workspace row runs once, in `applySidebarFilter` (`packages/app/src/components/sidebar/sidebar-filter.ts`), and `buildSidebarProjection` builds the pinned split, the groups, the project sections, and the number-key order from its result. Adding a second place that drops rows is how a hidden workspace ends up counted twice or hidden in one grouping mode and not the other.
+
+The filter returns **what it hid** as well as what survived, because the sidebar is the notification surface: it is how you find out an agent needs input, so removing a row removes a notification with it. Two rails read off that return value and both are load-bearing:
+
+- The active workspace is exempt from the filter, always. A workspace created while a filter is on carries no labels, matches nothing, and Paseo navigates straight into it — without the exemption you land on a workspace that is not in its own sidebar. A rendered row that fails the filter is by construction the exempted one, which is how it says so without being told which row is active.
+- `SidebarHiddenRail` is permanent while filtering: `N hidden · Clear`, in one press clearing every facet but the host one.
+
+Filter state (host, project, label, saved views) is per device and lives in `sidebar-view-store`; the labels themselves live on the daemon. See **Label** and **Saved view** in [glossary.md](glossary.md).
+
+Included labels read as either-of by default and as all-of when `labelMatch` is `all` — one mode over the facet rather than a fourth chip state, so a chip keeps meaning one thing and the mode says what the set means. It only applies from two lit labels: with fewer, the modes produce the same list, and `effectiveLabelMatch` is what everything reading the mode has to go through so a switch that cannot change the list is not reported as one — no pill offering a dead decision, no summary contradicting its own filter, no view marked edited without moving.
+
+Grouping is the other half of the same projection. Project mode renders the project tree; status and label mode are the same flat list with different headers, built by `sidebar-groups.ts` and rendered by `sidebar-group-list.tsx`. Two things about label mode are decisions rather than consequences. A workspace appears under **every** label it carries, so the list is a list of (label, workspace) pairs and its row count exceeds the workspace count — picking one label per workspace would make every header a lie about its own contents. That duplication is why `buildSidebarShortcutSections` dedupes by `workspaceKey`: a workspace earns one number, the first it qualifies for, so nine keys cover nine workspaces rather than six. And the catch-all "Unlabeled" group is not optional, for the reason the two rails exist — a workspace carries no labels at the moment it is created, so dropping unlabelled rows would hide the workspace you just made. Status and label collapse state are separate persisted sets, because otherwise collapsing "Done" also collapses a label called `done`.
+
+Label colours are the one write in this area that does not belong to a single host. Catalogs merge by name, first host wins in sorted `serverId` order, so recolouring `blocked` on the host whose menu you opened does nothing visible whenever another host sorts ahead of it and still holds the old colour — the picker would look broken at random depending on which machines are connected. `catalog-writes.ts` fans every colour change and every deletion out to all connected hosts that support labels, and reports a partial write rather than rounding it up to a success: which colour you end up looking at is exactly the thing you cannot see from the sidebar.
+
 ## Right-sidebar boundary: directory-backed vs workspace-owned
 
 Two workspaces can share the same `cwd` (e.g. a `directory` workspace and a `local_checkout` workspace on the same folder, or several workspaces opened against one checkout). Model B keeps these distinct: they share everything the directory determines, but nothing the workspace owns. The right-sidebar surfaces split cleanly along this line, and the split is enforced purely by **what each piece of state is keyed by**.

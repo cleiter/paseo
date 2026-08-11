@@ -15,6 +15,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { z } from "zod";
 
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { WORKSPACE_LABEL_COLORS } from "@getpaseo/protocol/workspace-labels";
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
@@ -8153,6 +8154,454 @@ test("workspace.pin.set.request stores the pin timestamp and emits an updated de
       pinnedAt: response?.payload.pinnedAt,
     },
   });
+});
+
+test("workspace.labels.set.request normalizes, persists, and echoes what it stored", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const project = createPersistedProjectRecord({
+    projectId: "proj-1",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "acme/repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
+  };
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-workspaces",
+    filter: {},
+    isBootstrapping: false,
+    lastEmittedByWorkspaceId: new Map(),
+    pendingUpdatesByWorkspaceId: new Map(),
+  };
+
+  // Raw client input: duplicate spellings, padding, and an entry that is only whitespace.
+  await session.handleMessage({
+    type: "workspace.labels.set.request",
+    workspaceId: workspace.workspaceId,
+    labels: ["  oss  ", "OSS", "   ", "blocked"],
+    requestId: "req-labels-1",
+  });
+
+  const response = findByType(emitted, "workspace.labels.set.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-labels-1",
+    workspaceId: "ws-1",
+    accepted: true,
+    labels: ["oss", "blocked"],
+    error: null,
+  });
+  expect(workspaces.get("ws-1")?.labels).toEqual(["oss", "blocked"]);
+  expect(findByType(emitted, "workspace_update")?.payload).toMatchObject({
+    kind: "upsert",
+    workspace: {
+      id: "ws-1",
+      labels: ["oss", "blocked"],
+    },
+  });
+});
+
+test("workspace.labels.set.request with an empty array clears the labels", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    labels: ["oss", "blocked"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
+  };
+
+  await session.handleMessage({
+    type: "workspace.labels.set.request",
+    workspaceId: workspace.workspaceId,
+    labels: [],
+    requestId: "req-labels-clear",
+  });
+
+  expect(findByType(emitted, "workspace.labels.set.response")?.payload).toMatchObject({
+    accepted: true,
+    labels: [],
+    error: null,
+  });
+  expect(workspaces.get("ws-1")?.labels).toEqual([]);
+});
+
+test("workspace.labels.set.request for an unknown workspace is rejected, not silently accepted", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.workspaceRegistry.update = async () => null;
+
+  await session.handleMessage({
+    type: "workspace.labels.set.request",
+    workspaceId: "ws-missing",
+    labels: ["oss"],
+    requestId: "req-labels-missing",
+  });
+
+  expect(findByType(emitted, "workspace.labels.set.response")?.payload).toMatchObject({
+    accepted: false,
+    labels: [],
+    error: "Workspace not found",
+  });
+});
+
+test("workspace.labels.catalog.get.request answers with a colour for every label in use", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    labels: ["oss", "blocked"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  session.workspaceRegistry.list = async () => [workspace];
+
+  await session.handleMessage({
+    type: "workspace.labels.catalog.get.request",
+    requestId: "req-catalog-get",
+  });
+
+  const payload = findByType(emitted, "workspace.labels.catalog.get.response")?.payload;
+  expect(payload).toMatchObject({ requestId: "req-catalog-get", accepted: true, error: null });
+  // Nobody has picked a colour, but every label in use still comes back with one — assignments
+  // are what decide which labels exist, the catalog only says what colour they are.
+  expect(payload?.catalog.map((entry) => entry.name)).toEqual(["oss", "blocked"]);
+  for (const entry of payload?.catalog ?? []) {
+    expect(WORKSPACE_LABEL_COLORS).toContain(entry.color);
+  }
+});
+
+test("workspace.labels.catalog.set.request stores the colour and returns the whole catalog", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.workspaceRegistry.list = async () => [];
+
+  await session.handleMessage({
+    type: "workspace.labels.catalog.set.request",
+    name: "  blocked  ",
+    color: "red",
+    requestId: "req-catalog-set",
+  });
+
+  expect(findByType(emitted, "workspace.labels.catalog.set.response")?.payload).toMatchObject({
+    requestId: "req-catalog-set",
+    accepted: true,
+    catalog: [{ name: "blocked", color: "red" }],
+    error: null,
+  });
+});
+
+test("workspace.labels.catalog.set.request rejects a colour outside the palette", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.workspaceRegistry.list = async () => [];
+
+  await session.handleMessage({
+    type: "workspace.labels.catalog.set.request",
+    name: "blocked",
+    color: "#ff0000",
+    requestId: "req-catalog-bad-color",
+  });
+
+  const payload = findByType(emitted, "workspace.labels.catalog.set.response")?.payload;
+  expect(payload?.accepted).toBe(false);
+  expect(payload?.error).toContain("Unknown label color");
+});
+
+test("workspace.labels.catalog.rename.request sweeps every workspace and moves the colour", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const first = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    // A second spelling, to prove the sweep matches the label rather than the string.
+    labels: ["Blocked", "oss"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const second = createPersistedWorkspaceRecord({
+    workspaceId: "ws-2",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "feature",
+    labels: ["blocked"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const untouched = createPersistedWorkspaceRecord({
+    workspaceId: "ws-3",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "other",
+    labels: ["oss"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([
+    [first.workspaceId, first],
+    [second.workspaceId, second],
+    [untouched.workspaceId, untouched],
+  ]);
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
+  };
+
+  await session.handleMessage({
+    type: "workspace.labels.catalog.set.request",
+    name: "blocked",
+    color: "red",
+    requestId: "req-rename-seed",
+  });
+  await session.handleMessage({
+    type: "workspace.labels.catalog.rename.request",
+    from: "blocked",
+    to: "  waiting  ",
+    requestId: "req-rename",
+  });
+
+  const payload = findByType(emitted, "workspace.labels.catalog.rename.response")?.payload;
+  expect(payload).toMatchObject({ requestId: "req-rename", accepted: true, error: null });
+  // The colour follows the name, and the position in each workspace's list is kept.
+  expect(payload?.catalog).toContainEqual({ name: "waiting", color: "red" });
+  expect(workspaces.get("ws-1")?.labels).toEqual(["waiting", "oss"]);
+  expect(workspaces.get("ws-2")?.labels).toEqual(["waiting"]);
+  expect(workspaces.get("ws-3")?.labels).toEqual(["oss"]);
+});
+
+// Merging two labels is destructive in a way a rename is not, so it has to be asked for as itself.
+test("workspace.labels.catalog.rename.request refuses a name another label already has", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    labels: ["blocked", "review"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
+  };
+
+  await session.handleMessage({
+    type: "workspace.labels.catalog.rename.request",
+    from: "blocked",
+    to: "REVIEW",
+    requestId: "req-rename-taken",
+  });
+
+  const payload = findByType(emitted, "workspace.labels.catalog.rename.response")?.payload;
+  expect(payload?.accepted).toBe(false);
+  expect(payload?.error).toContain("already exists");
+  expect(workspaces.get("ws-1")?.labels).toEqual(["blocked", "review"]);
+});
+
+test("workspace.labels.catalog.rename.request accepts a change of spelling", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    labels: ["blocked"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
+  };
+
+  await session.handleMessage({
+    type: "workspace.labels.catalog.rename.request",
+    from: "blocked",
+    to: "Blocked",
+    requestId: "req-rename-case",
+  });
+
+  expect(findByType(emitted, "workspace.labels.catalog.rename.response")?.payload?.accepted).toBe(
+    true,
+  );
+  expect(workspaces.get("ws-1")?.labels).toEqual(["Blocked"]);
+});
+
+test("workspace.labels.catalog.remove.request leaves the assignments alone without detach", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    labels: ["blocked"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
+  };
+
+  await session.handleMessage({
+    type: "workspace.labels.catalog.set.request",
+    name: "blocked",
+    color: "red",
+    requestId: "req-catalog-seed",
+  });
+  await session.handleMessage({
+    type: "workspace.labels.catalog.remove.request",
+    name: "blocked",
+    requestId: "req-catalog-remove",
+  });
+
+  expect(findByType(emitted, "workspace.labels.catalog.remove.response")?.payload).toMatchObject({
+    accepted: true,
+    error: null,
+  });
+  // The colour is gone; the label is not. It now draws in its derived colour.
+  expect(workspaces.get("ws-1")?.labels).toEqual(["blocked"]);
+});
+
+test("workspace.labels.catalog.remove.request with detach strips the label off every workspace", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const first = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    labels: ["Blocked", "oss"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const second = createPersistedWorkspaceRecord({
+    workspaceId: "ws-2",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "worktree",
+    displayName: "feature",
+    labels: ["oss"],
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([
+    [first.workspaceId, first],
+    [second.workspaceId, second],
+  ]);
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
+  };
+
+  await session.handleMessage({
+    type: "workspace.labels.catalog.remove.request",
+    name: "blocked",
+    detach: true,
+    requestId: "req-catalog-detach",
+  });
+
+  expect(findByType(emitted, "workspace.labels.catalog.remove.response")?.payload).toMatchObject({
+    accepted: true,
+    error: null,
+  });
+  // Matched case-insensitively, and the workspace that never carried it is untouched.
+  expect(workspaces.get("ws-1")?.labels).toEqual(["oss"]);
+  expect(workspaces.get("ws-2")?.labels).toEqual(["oss"]);
 });
 
 test("workspace.title.set.request with whitespace-only title clears the title", async () => {

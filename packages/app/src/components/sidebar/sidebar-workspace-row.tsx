@@ -438,7 +438,7 @@ function WorkspaceRowTrailingActions({
     isTouchPlatform,
     showShortcut,
   });
-  const kebab = useOpenKebabMenuVisibility(showKebabInSlot);
+  const kebab = useOpenKebabMenuVisibility(workspace.workspaceKey, showKebabInSlot);
 
   return (
     <>

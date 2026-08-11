@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useReportSidebarRowMenu } from "@/stores/sidebar-row-menu-store";
 
 /**
  * Keeps a row's kebab in its slot for as long as the menu it opened is up.
@@ -9,12 +10,29 @@ import { useMemo, useState } from "react";
  * state that can close it: on a sheet that strands a full-screen backdrop over the app until
  * reload. Lifting the menu's open state to the component that decides whether to render it is
  * what stops the row from pulling the ground out from under it.
+ *
+ * The sidebar filter decides whether the row itself is rendered, and it is one menu press away
+ * from changing its mind, so the open state is reported there too — see `useSidebarRowMenuStore`.
  */
-export function useOpenKebabMenuVisibility(showKebab: boolean): {
+export function useOpenKebabMenuVisibility(
+  workspaceKey: string,
+  showKebab: boolean,
+): {
   showKebab: boolean;
   menuProps: { open: boolean; onOpenChange: (open: boolean) => void };
 } {
   const [open, setOpen] = useState(false);
-  const menuProps = useMemo(() => ({ open, onOpenChange: setOpen }), [open]);
+  const reportMenu = useReportSidebarRowMenu(workspaceKey);
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      setOpen(next);
+      reportMenu(next);
+    },
+    [reportMenu],
+  );
+  const menuProps = useMemo(
+    () => ({ open, onOpenChange: handleOpenChange }),
+    [handleOpenChange, open],
+  );
   return { showKebab: showKebab || open, menuProps };
 }

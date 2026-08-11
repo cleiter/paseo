@@ -24,6 +24,8 @@ import {
   GitBranch,
   Server,
 } from "lucide-react-native";
+import { WorkspaceLabelChip } from "@/components/sidebar/workspace-labels/label-chip";
+import { useWorkspaceLabelColors } from "@/stores/workspace-label-catalog-store";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import type { Theme } from "@/styles/theme";
@@ -294,6 +296,7 @@ function WorkspaceHoverCardContent({
               {workspace.name}
             </Text>
           </View>
+          {workspace.labels.length > 0 ? <HoverCardLabels names={workspace.labels} /> : null}
           {prHint ? <PrBadge hint={prHint} style={styles.cardInfoRow} /> : null}
           {workspace.diffStat ? (
             <View style={styles.cardInfoRow}>
@@ -336,6 +339,33 @@ function WorkspaceHoverCardContent({
         </FloatingSurface>
       </View>
     </Portal>
+  );
+}
+
+/**
+ * Every label the workspace carries, at full length and wrapping.
+ *
+ * The row caps itself at three chips because it splits one line with the branch, the change
+ * request and the checks. This card is the surface with room, so it is where the rest of the
+ * labels are read.
+ *
+ * Read-only, like the chips on the row. This card appears under a pointer that was on its way
+ * somewhere else, so a control inside it is a control nobody meant to open, let alone press.
+ * Filtering by a label is the track's job.
+ *
+ * Not governed by Show → Labels. That preference is about how dense the list is; the card is what
+ * you ask for when the list is not telling you enough, and it already shows the branch and the
+ * path whether or not the row does.
+ */
+function HoverCardLabels({ names }: { names: readonly string[] }): ReactElement {
+  const colors = useWorkspaceLabelColors();
+
+  return (
+    <View style={styles.labels} testID="hover-card-workspace-labels">
+      {names.map((name) => (
+        <WorkspaceLabelChip key={name.toLowerCase()} name={name} colors={colors} />
+      ))}
+    </View>
   );
 }
 
@@ -604,6 +634,15 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     flex: 1,
     minWidth: 0,
+  },
+  labels: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    // The same gap the row uses, so a label is the same object in both places.
+    gap: 3,
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
   },
   cardInfoRow: {
     flexDirection: "row",

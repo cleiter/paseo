@@ -3,6 +3,8 @@ import { promises as fs } from "node:fs";
 import type { Logger } from "pino";
 import { z } from "zod";
 
+import { normalizeWorkspaceLabels } from "@getpaseo/protocol/workspace-labels";
+
 import { writeJsonFileAtomic } from "./atomic-file.js";
 import { areEquivalentPaths } from "../utils/path.js";
 import {
@@ -92,6 +94,10 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // User-assigned label names. The name is the identity — there is no catalogue and no id, so
+  // the same label means the same thing across hosts. Normalized on every write through
+  // normalizeWorkspaceLabels; reconciliation never touches it.
+  labels: z.array(z.string()).optional().default([]),
 });
 
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
@@ -556,6 +562,7 @@ export function createPersistedWorkspaceRecord(input: {
   archivedAt?: string | null;
   autoArchivedChangeRequestUrl?: string | null;
   pinnedAt?: string | null;
+  labels?: readonly string[];
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
     ...input,
@@ -568,6 +575,7 @@ export function createPersistedWorkspaceRecord(input: {
     archivedAt: input.archivedAt ?? null,
     autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
     pinnedAt: input.pinnedAt ?? null,
+    labels: normalizeWorkspaceLabels(input.labels ?? []),
   });
 }
 

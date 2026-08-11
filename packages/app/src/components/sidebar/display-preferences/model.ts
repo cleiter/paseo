@@ -4,7 +4,12 @@ import {
   type SidebarWorkspaceTrailing,
   type WorkspaceTitleSource,
 } from "@/hooks/use-settings";
-import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import {
+  useSidebarViewStore,
+  type SavedSidebarView,
+  type SidebarGroupMode,
+} from "@/stores/sidebar-view-store";
+import type { LabelFilterMode, LabelMatchMode } from "@/components/sidebar/sidebar-filter";
 import { DEFAULT_SIDEBAR_CHECKS_DISPLAY, type SidebarChecksDisplay } from "./checks-display";
 import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } from "./row-items";
 
@@ -26,6 +31,19 @@ export interface SidebarDisplayPreferences {
   hostFilters: readonly string[];
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
+  projectFilters: readonly string[];
+  toggleProjectFilter: (viewKey: string) => void;
+  clearProjectFilters: () => void;
+  labelFilters: Readonly<Record<string, LabelFilterMode>>;
+  cycleLabelFilter: (name: string) => void;
+  clearLabelFilters: () => void;
+  labelMatch: LabelMatchMode;
+  setLabelMatch: (mode: LabelMatchMode) => void;
+  savedViews: readonly SavedSidebarView[];
+  activeSavedViewId: string | null;
+  applySavedView: (id: string) => void;
+  updateSavedView: (id: string) => void;
+  deleteSavedView: (id: string) => void;
 }
 
 /**
@@ -42,6 +60,19 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const hostFilters = useSidebarViewStore((state) => state.hostFilters);
   const toggleHostFilter = useSidebarViewStore((state) => state.toggleHostFilter);
   const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
+  const projectFilters = useSidebarViewStore((state) => state.projectFilters);
+  const toggleProjectFilter = useSidebarViewStore((state) => state.toggleProjectFilter);
+  const clearProjectFilters = useSidebarViewStore((state) => state.clearProjectFilters);
+  const labelFilters = useSidebarViewStore((state) => state.labelFilters);
+  const cycleLabelFilter = useSidebarViewStore((state) => state.cycleLabelFilter);
+  const clearLabelFilters = useSidebarViewStore((state) => state.clearLabelFilters);
+  const labelMatch = useSidebarViewStore((state) => state.labelMatch);
+  const setLabelMatch = useSidebarViewStore((state) => state.setLabelMatch);
+  const savedViews = useSidebarViewStore((state) => state.savedViews);
+  const activeSavedViewId = useSidebarViewStore((state) => state.activeSavedViewId);
+  const applySavedView = useSidebarViewStore((state) => state.applySavedSidebarView);
+  const updateSavedView = useSidebarViewStore((state) => state.updateSavedSidebarView);
+  const deleteSavedView = useSidebarViewStore((state) => state.deleteSavedSidebarView);
 
   const {
     settings: {
@@ -100,6 +131,19 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       hostFilters,
       toggleHostFilter,
       clearHostFilters,
+      projectFilters,
+      toggleProjectFilter,
+      clearProjectFilters,
+      labelFilters,
+      cycleLabelFilter,
+      clearLabelFilters,
+      labelMatch,
+      setLabelMatch,
+      savedViews,
+      activeSavedViewId,
+      applySavedView,
+      updateSavedView,
+      deleteSavedView,
     }),
     [
       grouping,
@@ -115,6 +159,19 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       hostFilters,
       toggleHostFilter,
       clearHostFilters,
+      projectFilters,
+      toggleProjectFilter,
+      clearProjectFilters,
+      labelFilters,
+      cycleLabelFilter,
+      clearLabelFilters,
+      labelMatch,
+      setLabelMatch,
+      savedViews,
+      activeSavedViewId,
+      applySavedView,
+      updateSavedView,
+      deleteSavedView,
     ],
   );
 }

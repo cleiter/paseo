@@ -11,6 +11,7 @@ import {
   Keyboard,
   Plus,
   Settings,
+  Tag,
 } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { getIsElectronRuntime } from "@/constants/layout";
@@ -31,7 +32,7 @@ import {
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { CommandCenterContribution, CommandCenterIconProps } from "./contributions";
 import { useCommandCenterActions } from "./provider";
-import { buildGroupingContribution } from "./root-contributions";
+import { buildGroupingContributions } from "./root-contributions";
 
 const ThemedPlus = withUnistyles(Plus, (theme) => ({ color: theme.colors.foregroundMuted }));
 const ThemedFolderPlus = withUnistyles(FolderPlus, (theme) => ({
@@ -54,6 +55,7 @@ const ThemedFolder = withUnistyles(Folder, (theme) => ({ color: theme.colors.for
 const ThemedCircleDashed = withUnistyles(CircleDashed, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
+const ThemedTag = withUnistyles(Tag, (theme) => ({ color: theme.colors.foregroundMuted }));
 
 function PlusIcon({ size }: CommandCenterIconProps) {
   return <ThemedPlus size={size} strokeWidth={2.4} />;
@@ -89,6 +91,10 @@ function FolderIcon({ size }: CommandCenterIconProps) {
 
 function CircleDashedIcon({ size }: CommandCenterIconProps) {
   return <ThemedCircleDashed size={size} strokeWidth={2.2} />;
+}
+
+function TagIcon({ size }: CommandCenterIconProps) {
+  return <ThemedTag size={size} strokeWidth={2.2} />;
 }
 
 export function CommandCenterRootActions() {
@@ -250,14 +256,15 @@ export function CommandCenterRootActions() {
     }
 
     availableActions.push(
-      buildGroupingContribution({
+      ...buildGroupingContributions({
         groupMode,
+        sectionTitle: t("shell.commandCenter.actions"),
         labels: {
-          section: t("shell.commandCenter.actions"),
-          groupByProject: t("shell.commandCenter.groupByProject"),
-          groupByStatus: t("shell.commandCenter.groupByStatus"),
+          project: t("shell.commandCenter.groupByProject"),
+          status: t("shell.commandCenter.groupByStatus"),
+          label: t("shell.commandCenter.groupByLabel"),
         },
-        icons: { project: FolderIcon, status: CircleDashedIcon },
+        icons: { project: FolderIcon, status: CircleDashedIcon, label: TagIcon },
         setGroupMode,
       }),
     );

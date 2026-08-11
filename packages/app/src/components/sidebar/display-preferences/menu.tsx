@@ -1,6 +1,7 @@
 import { useCallback, useMemo, type ComponentType, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { View, type PressableStateCallbackType } from "react-native";
+import { useRouter } from "expo-router";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Captions,
@@ -13,8 +14,11 @@ import {
   GitBranch,
   GitPullRequest,
   Globe,
+  Layers,
+  Plus,
   Server,
   Settings2,
+  Tag,
   Type,
 } from "lucide-react-native";
 import {
@@ -27,7 +31,25 @@ import {
   type MenuPageDefinition,
 } from "@/components/ui/menu";
 import { HostStatusDot } from "@/components/host-status-dot";
+import { ProjectIconView } from "@/components/project-icon-view";
+import { useSidebarModel } from "@/components/sidebar/sidebar-model";
+import { useProjectIcons } from "@/projects/icons";
+import { projectIconInitialFromDisplayName } from "@/utils/project-display-name";
+import { resolveSidebarProjectIconTargets } from "@/utils/sidebar-project-row-model";
+import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
+import {
+  WorkspaceLabelExcludedMark,
+  WorkspaceLabelSwatch,
+} from "@/components/sidebar/workspace-labels/label-chip";
+import { promptToCreateWorkspaceLabel } from "@/components/sidebar/workspace-labels/dialog-store";
+import type { WorkspaceLabelColors } from "@/components/sidebar/workspace-labels/catalog";
+import {
+  SIDEBAR_GROUP_MODES,
+  SIDEBAR_GROUP_MODE_LABEL_KEYS,
+} from "@/components/sidebar/grouping-labels";
+import { useWorkspaceLabelColors } from "@/stores/workspace-label-catalog-store";
 import { isWeb } from "@/constants/platform";
+import { buildSettingsSectionRoute } from "@/utils/host-routes";
 import { useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import type { SidebarGroupMode } from "@/stores/sidebar-view-store";
@@ -35,16 +57,29 @@ import type { WorkspaceTitleSource } from "@/hooks/use-settings";
 import { SIDEBAR_CHECKS_DISPLAYS, type SidebarChecksDisplay } from "./checks-display";
 import { useSidebarDisplayPreferences, type SidebarTrailingChoice } from "./model";
 import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
+import type { LabelFilterMode } from "@/components/sidebar/sidebar-filter";
 
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const ThemedSettings2 = withUnistyles(Settings2);
 /** CI's mark: the subject of the checks row, and the shape the icon-only option leaves behind. */
 const ThemedCircleCheck = withUnistyles(CircleCheck);
+/** Two lit labels read as either-of or all-of — see `LabelMatchMode`. */
+const ThemedLayers = withUnistyles(Layers);
+/** Making a label, and going to the page that owns them all. */
+const ThemedPlus = withUnistyles(Plus);
 
 /** Fits the item's 16pt leading slot with a hair of room, matching the trailing check. */
 const OPTION_ICON_SIZE = 14;
+/** The size `MenuItem` draws its check at, for the marks that stand in the same slot. */
+const SELECTED_ICON_SIZE = 16;
 const MENU_WIDTH = 232;
+
+// Built once: these carry no props from the rows they sit in, and `withUnistyles` reads the theme
+// when it renders rather than when the element is created, so hoisting them is safe.
+const MATCH_ALL_LEADING = <ThemedLayers size={OPTION_ICON_SIZE} uniProps={mutedIconMapping} />;
+const NEW_LABEL_LEADING = <ThemedPlus size={OPTION_ICON_SIZE} uniProps={mutedIconMapping} />;
+const EDIT_LABELS_LEADING = <ThemedSettings2 size={OPTION_ICON_SIZE} uniProps={mutedIconMapping} />;
 
 type OptionIcon = ComponentType<{
   size: number;
@@ -56,6 +91,7 @@ type OptionIcon = ComponentType<{
 const GROUPING_ICONS: Record<SidebarGroupMode, OptionIcon> = {
   project: withUnistyles(Folder),
   status: withUnistyles(CircleDashed),
+  label: withUnistyles(Tag),
 };
 
 const TITLE_SOURCE_ICONS: Record<WorkspaceTitleSource, OptionIcon> = {
@@ -66,6 +102,7 @@ const TITLE_SOURCE_ICONS: Record<WorkspaceTitleSource, OptionIcon> = {
 // The same marks these things carry on the workspace row itself, so the menu and the row it
 // configures name each item the same way twice.
 const ROW_ITEM_ICONS: Record<SidebarRowItem, OptionIcon> = {
+  labels: withUnistyles(Tag),
   host: withUnistyles(Server),
   changeRequest: withUnistyles(GitPullRequest),
   services: withUnistyles(Globe),
@@ -84,14 +121,8 @@ const TRAILING_ICONS: Record<SidebarTrailingChoice, OptionIcon> = {
   timestamp: withUnistyles(Clock),
 };
 
-const GROUPING_MODES: readonly SidebarGroupMode[] = ["project", "status"];
 const TITLE_SOURCES: readonly WorkspaceTitleSource[] = ["title", "branch"];
 const TRAILING_CHOICES: readonly SidebarTrailingChoice[] = ["diff", "timestamp"];
-
-const GROUPING_LABEL_KEYS: Record<SidebarGroupMode, string> = {
-  project: "sidebar.display.grouping.project",
-  status: "sidebar.display.grouping.status",
-};
 
 const TITLE_SOURCE_LABEL_KEYS: Record<WorkspaceTitleSource, string> = {
   title: "sidebar.display.titleSource.title",
@@ -99,6 +130,7 @@ const TITLE_SOURCE_LABEL_KEYS: Record<WorkspaceTitleSource, string> = {
 };
 
 const ROW_ITEM_LABEL_KEYS: Record<SidebarRowItem, string> = {
+  labels: "sidebar.display.show.labels",
   host: "sidebar.display.show.host",
   changeRequest: "sidebar.display.show.changeRequest",
   services: "sidebar.display.show.services",
@@ -126,6 +158,9 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   const { t } = useTranslation();
   const preferences = useSidebarDisplayPreferences();
   const hosts = useHosts();
+  // The label filter page offers the same labels the chip track does: with a host or project
+  // facet on, the ones the workspaces still on screen carry.
+  const { projects, filterableLabels } = useSidebarModel();
 
   const triggerStyle = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -136,6 +171,11 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   );
 
   const showHostFilter = hosts.length > 1;
+  // One project is the whole sidebar, so filtering to it is a no-op with a menu row attached.
+  const showProjectFilter = projects.length > 1;
+  // No labels means no decision to make. The branch appears with the first label someone creates.
+  const showLabelFilter = filterableLabels.length > 0;
+  const labelFilterCount = Object.keys(preferences.labelFilters).length;
 
   const pages = useMemo<MenuPageDefinition[]>(() => {
     const definitions: MenuPageDefinition[] = [
@@ -144,9 +184,9 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         title: t("sidebar.display.grouping.label"),
         content: (
           <OptionList
-            values={GROUPING_MODES}
+            values={SIDEBAR_GROUP_MODES}
             icons={GROUPING_ICONS}
-            labelKeys={GROUPING_LABEL_KEYS}
+            labelKeys={SIDEBAR_GROUP_MODE_LABEL_KEYS}
             selectedValue={preferences.grouping}
             onSelect={preferences.setGrouping}
             testIDPrefix="sidebar-grouping"
@@ -195,8 +235,31 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         content: <HostFilterPage preferences={preferences} hosts={hosts} />,
       });
     }
+    if (showProjectFilter) {
+      definitions.push({
+        id: "projectFilter",
+        title: t("sidebar.display.projectFilter.label"),
+        content: <ProjectFilterPage preferences={preferences} projects={projects} />,
+      });
+    }
+    if (showLabelFilter) {
+      definitions.push({
+        id: "labelFilter",
+        title: t("sidebar.display.labelFilter.label"),
+        content: <LabelFilterPage preferences={preferences} labels={filterableLabels} />,
+      });
+    }
     return definitions;
-  }, [t, preferences, hosts, showHostFilter]);
+  }, [
+    t,
+    preferences,
+    hosts,
+    projects,
+    showHostFilter,
+    showProjectFilter,
+    showLabelFilter,
+    filterableLabels,
+  ]);
 
   return (
     <MenuRoot compactMode="sheet">
@@ -217,7 +280,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
       >
         <MenuSubTrigger
           id="grouping"
-          value={t(GROUPING_LABEL_KEYS[preferences.grouping])}
+          value={t(SIDEBAR_GROUP_MODE_LABEL_KEYS[preferences.grouping])}
           testID="sidebar-display-grouping"
         >
           {t("sidebar.display.grouping.label")}
@@ -232,19 +295,35 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         <MenuSubTrigger id="show" testID="sidebar-display-show">
           {t("sidebar.display.show.label")}
         </MenuSubTrigger>
+        {showHostFilter || showProjectFilter || showLabelFilter ? <MenuSeparator /> : null}
+        {/* A filtered sidebar looks like workspaces went missing, so the branch says so from the
+            root rather than making you open it to find out. */}
         {showHostFilter ? (
-          <>
-            <MenuSeparator />
-            {/* A filtered sidebar looks like workspaces went missing, so the branch says so
-                from the root rather than making you open it to find out. */}
-            <MenuSubTrigger
-              id="hostFilter"
-              indicator={preferences.hostFilters.length > 0}
-              testID="sidebar-display-host-filter"
-            >
-              {t("sidebar.display.hostFilter.label")}
-            </MenuSubTrigger>
-          </>
+          <MenuSubTrigger
+            id="hostFilter"
+            indicator={preferences.hostFilters.length > 0}
+            testID="sidebar-display-host-filter"
+          >
+            {t("sidebar.display.hostFilter.label")}
+          </MenuSubTrigger>
+        ) : null}
+        {showProjectFilter ? (
+          <MenuSubTrigger
+            id="projectFilter"
+            indicator={preferences.projectFilters.length > 0}
+            testID="sidebar-display-project-filter"
+          >
+            {t("sidebar.display.projectFilter.label")}
+          </MenuSubTrigger>
+        ) : null}
+        {showLabelFilter ? (
+          <MenuSubTrigger
+            id="labelFilter"
+            indicator={labelFilterCount > 0}
+            testID="sidebar-display-label-filter"
+          >
+            {t("sidebar.display.labelFilter.label")}
+          </MenuSubTrigger>
         ) : null}
       </MenuSurface>
     </MenuRoot>
@@ -446,6 +525,222 @@ function HostFilterItem({
   );
 }
 
+/**
+ * Which projects the sidebar shows, as a plain allowlist — no third state, unlike labels.
+ *
+ * A workspace belongs to exactly one project, so "not these" is expressible as "all the others"
+ * and a tri-state here would be two ways to say the same thing. Labels earn their exclude state
+ * because a workspace can carry several at once.
+ */
+function ProjectFilterPage({
+  preferences,
+  projects,
+}: {
+  preferences: Preferences;
+  projects: readonly SidebarProjectEntry[];
+}): ReactElement {
+  const { t } = useTranslation();
+  const iconTargets = useMemo(() => resolveSidebarProjectIconTargets(projects), [projects]);
+  const icons = useProjectIcons({ projects: iconTargets });
+  return (
+    <>
+      <MenuItem
+        selected={preferences.projectFilters.length === 0}
+        closeOnSelect={false}
+        onSelect={preferences.clearProjectFilters}
+        testID="sidebar-project-filter-all"
+      >
+        {t("sidebar.display.projectFilter.all")}
+      </MenuItem>
+      {projects.map((project) => (
+        <ProjectFilterItem
+          key={project.viewKey}
+          viewKey={project.viewKey}
+          label={project.projectName}
+          iconDataUri={icons.get(project.viewKey) ?? null}
+          selected={preferences.projectFilters.includes(project.viewKey)}
+          onToggle={preferences.toggleProjectFilter}
+        />
+      ))}
+    </>
+  );
+}
+
+function ProjectFilterItem({
+  viewKey,
+  label,
+  iconDataUri,
+  selected,
+  onToggle,
+}: {
+  viewKey: string;
+  label: string;
+  iconDataUri: string | null;
+  selected: boolean;
+  onToggle: (viewKey: string) => void;
+}): ReactElement {
+  const handleSelect = useCallback(() => onToggle(viewKey), [onToggle, viewKey]);
+  const leading = useMemo(
+    () => (
+      <ProjectIconView
+        iconDataUri={iconDataUri}
+        initial={projectIconInitialFromDisplayName(label)}
+        projectViewKey={viewKey}
+        size={OPTION_ICON_SIZE}
+        textStyle={styles.projectIconText}
+      />
+    ),
+    [iconDataUri, label, viewKey],
+  );
+
+  return (
+    <MenuItem
+      selected={selected}
+      closeOnSelect={false}
+      leading={leading}
+      onSelect={handleSelect}
+      testID={`sidebar-project-filter-${viewKey}`}
+    >
+      {label}
+    </MenuItem>
+  );
+}
+
+/**
+ * The filter, and under it the two verbs that change the labels themselves — the same pair, in the
+ * same order, that a workspace's Labels page ends with.
+ *
+ * Filtering by a label is where you notice one is missing or misnamed, and the page you have open
+ * is the page listing every label there is. Without these you close the menu, find a workspace,
+ * open its menu, and go two pages in to reach the same two rows.
+ *
+ * New label makes one with nothing to hang it on. From a workspace's menu the label lands on that
+ * workspace; there is no workspace here, so it joins the catalog and waits to be put on something —
+ * which is what makes the chip track show it and this page offer it.
+ */
+function LabelFilterPage({
+  preferences,
+  labels,
+}: {
+  preferences: Preferences;
+  labels: readonly string[];
+}): ReactElement {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const colors = useWorkspaceLabelColors();
+  const handleEditLabels = useCallback(() => {
+    router.push(buildSettingsSectionRoute("labels"));
+  }, [router]);
+  const { labelMatch, setLabelMatch } = preferences;
+  const handleToggleMatch = useCallback(
+    () => setLabelMatch(labelMatch === "all" ? "any" : "all"),
+    [labelMatch, setLabelMatch],
+  );
+  return (
+    <>
+      <MenuItem
+        selected={Object.keys(preferences.labelFilters).length === 0}
+        closeOnSelect={false}
+        onSelect={preferences.clearLabelFilters}
+        testID="sidebar-label-filter-all"
+      >
+        {t("sidebar.display.labelFilter.all")}
+      </MenuItem>
+      {labels.map((label) => (
+        <LabelFilterItem
+          key={label.toLowerCase()}
+          label={label}
+          mode={preferences.labelFilters[label.toLowerCase()]}
+          colors={colors}
+          onCycle={preferences.cycleLabelFilter}
+        />
+      ))}
+      {/* Under the labels, because it is about the set rather than any one of them, and worded
+          "Match all" rather than "All labels" — that is the clear row at the top, meaning the
+          opposite. Permanent, unlike the track's pill, so the mode stays reachable and readable
+          with the chips put away. */}
+      <MenuSeparator />
+      <MenuItem
+        selected={preferences.labelMatch === "all"}
+        leading={MATCH_ALL_LEADING}
+        closeOnSelect={false}
+        onSelect={handleToggleMatch}
+        testID="sidebar-label-filter-match-all"
+      >
+        {t("sidebar.display.labelFilter.matchAll")}
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem
+        leading={NEW_LABEL_LEADING}
+        onSelect={promptToCreateWorkspaceLabel}
+        testID="sidebar-label-filter-new-label"
+      >
+        {t("sidebar.workspace.labels.newLabel")}
+      </MenuItem>
+      <MenuItem
+        leading={EDIT_LABELS_LEADING}
+        onSelect={handleEditLabels}
+        testID="sidebar-label-filter-edit-labels"
+      >
+        {t("sidebar.workspace.labels.editLabels")}
+      </MenuItem>
+    </>
+  );
+}
+
+/**
+ * Three states per label, cycled by pressing the row: neutral, "only these", "never these".
+ *
+ * The two slots say two different things. On the left is which label this is, so the swatch stays
+ * put in every state and the page reads with the same colours the rows do. On the right is what
+ * the filter is doing with it: a check for "only these", the crossed-out eye for "never these",
+ * nothing for a label the filter is not using. Excluded never fills the row — a check and a fill
+ * on one row is two answers to one question (docs/menus.md).
+ *
+ * The mark carries it alone. A word under the name doubled every excluded row's height to repeat
+ * what the eye already says, and a list where some rows are twice as tall as their neighbours is
+ * harder to run down than one that is only marked.
+ */
+function LabelFilterItem({
+  label,
+  mode,
+  colors,
+  onCycle,
+}: {
+  label: string;
+  mode: LabelFilterMode | undefined;
+  colors: WorkspaceLabelColors;
+  onCycle: (label: string) => void;
+}): ReactElement {
+  const handleSelect = useCallback(() => onCycle(label), [label, onCycle]);
+  const leading = useMemo(
+    () => <WorkspaceLabelSwatch name={label} colors={colors} />,
+    [colors, label],
+  );
+  // Sized to the check it stands in for, and in the label's own colour, the same mark the chip
+  // track and the view editor use for an excluded label.
+  const trailing = useMemo(
+    () =>
+      mode === "exclude" ? (
+        <WorkspaceLabelExcludedMark name={label} colors={colors} size={SELECTED_ICON_SIZE} />
+      ) : null,
+    [colors, label, mode],
+  );
+
+  return (
+    <MenuItem
+      selected={mode === "include"}
+      closeOnSelect={false}
+      leading={leading}
+      trailing={trailing}
+      onSelect={handleSelect}
+      testID={`sidebar-label-filter-${label.toLowerCase()}`}
+    >
+      {label}
+    </MenuItem>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   trigger: {
     width: 28,
@@ -456,5 +751,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  // The generated project icon carries an initial, and the leading slot here is 14pt rather than
+  // the sidebar's 16pt — small enough that the smallest token still overflows the square.
+  projectIconText: {
+    fontSize: 9,
+    fontWeight: "600",
   },
 }));

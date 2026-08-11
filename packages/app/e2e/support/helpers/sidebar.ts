@@ -179,6 +179,11 @@ export async function selectSidebarStatusGrouping(page: Page): Promise<void> {
   await page.getByTestId("sidebar-grouping-status").click();
 }
 
+export async function selectSidebarLabelGrouping(page: Page): Promise<void> {
+  await openSidebarDisplayPage(page, "sidebar-display-grouping");
+  await page.getByTestId("sidebar-grouping-label").click();
+}
+
 export async function openMobileAgentSidebar(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu" }).click();
 }

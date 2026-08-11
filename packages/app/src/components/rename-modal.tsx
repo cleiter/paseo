@@ -8,6 +8,7 @@ import {
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+import { resolveRenameModalState } from "@/components/rename-modal-state";
 import { isWeb } from "@/constants/platform";
 
 export interface AdaptiveRenameModalProps {
@@ -108,7 +109,13 @@ export function AdaptiveRenameModal({
     void handleSubmit();
   }, [handleSubmit]);
 
-  const submitDisabled = isPending || draft === initialValue || computeError(draft) !== null;
+  const { shownError, submitDisabled } = resolveRenameModalState({
+    draft,
+    initialValue,
+    isPending,
+    submitError: error,
+    validate: computeError,
+  });
   const inputTestID = testID ? `${testID}-input` : undefined;
   const errorTestID = testID ? `${testID}-error` : undefined;
   const submitTestID = testID ? `${testID}-submit` : undefined;
@@ -136,9 +143,9 @@ export function AdaptiveRenameModal({
           style={styles.input}
           testID={inputTestID}
         />
-        {error ? (
+        {shownError ? (
           <Text style={styles.errorText} testID={errorTestID}>
-            {error}
+            {shownError}
           </Text>
         ) : null}
         <View style={styles.actions}>
