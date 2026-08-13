@@ -316,6 +316,26 @@ describe("loadSettingsFromStorage", () => {
 });
 
 describe("saveAppSettings", () => {
+  it("reloads a setting written over the full current defaults", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify(DEFAULT_CLIENT_SETTINGS),
+      }),
+    });
+    const queryClient = new QueryClient();
+
+    await saveAppSettings({
+      queryClient,
+      updates: { language: "zh-CN" },
+      deps,
+    });
+
+    await expect(loadAppSettingsFromStorage(deps)).resolves.toMatchObject({
+      language: "zh-CN",
+      sidebarRowItems: { labels: true },
+    });
+  });
+
   it("saves terminal scrollback through app settings persistence", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
