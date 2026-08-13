@@ -1854,7 +1854,6 @@ export const ar: TranslationResources = {
       nameTaken: "يوجد تصنيف بهذا الاسم بالفعل.",
       colorLabel: "اللون",
       colorAutomatic: "استخدام اللون التلقائي",
-      renameUnsupported: "حدّث كل المضيفات قبل إعادة تسمية تصنيف.",
       create: "إنشاء",
       save: "حفظ",
       saving: "جارٍ الحفظ...",

@@ -1897,7 +1897,6 @@ export const es: TranslationResources = {
       nameTaken: "Ya existe una etiqueta con ese nombre.",
       colorLabel: "Color",
       colorAutomatic: "Usar color automático",
-      renameUnsupported: "Actualiza todos los hosts antes de renombrar una etiqueta.",
       create: "Crear",
       save: "Guardar",
       saving: "Guardando...",

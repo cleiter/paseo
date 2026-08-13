@@ -3214,10 +3214,6 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceRecovery: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.3.2, drop the gate when floor >= v0.3.2.
         workspaceLabels: z.boolean().optional(),
-        // COMPAT(workspaceLabelRename): added in v0.3.2, drop the gate when floor >= v0.3.2.
-        // Its own flag rather than riding on `workspaceLabels`: a daemon that shipped labels
-        // before the rename RPC existed advertises the first and cannot answer the second.
-        workspaceLabelRename: z.boolean().optional(),
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.

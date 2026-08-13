@@ -26,7 +26,6 @@ import {
 } from "@/stores/workspace-label-catalog-store";
 import { workspaceLabelColor } from "./catalog";
 import {
-  canRenameWorkspaceLabelEverywhere,
   renameWorkspaceLabelEverywhere,
   resetWorkspaceLabelColorEverywhere,
   setWorkspaceLabelColorEverywhere,
@@ -41,7 +40,6 @@ import {
 } from "./edit-plan";
 import { workspaceLabelSwatchFill } from "./label-chip";
 import {
-  readWorkspaceLabelCatalogHosts,
   readWorkspaceLabels,
   useKnownWorkspaceLabels,
   useWorkspaceLabelCatalogWriteDeps,
@@ -134,11 +132,6 @@ function WorkspaceLabelDialog({
   const [nameError, setNameError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
-  // Whether every reachable host is new enough for the rename RPC, read from the stores at the
-  // moment the dialog opens rather than through the shared connection-status hook: this component
-  // mounts at the app root before any daemon has connected, and that hook never revises the
-  // `connecting` it handed the first render. See `model.ts`.
-  const [canRename, setCanRename] = useState(true);
   const [openedFor, setOpenedFor] = useState<WorkspaceLabelDialogRequest | null>(null);
 
   // Reset during render rather than in an effect, so the draft is seeded from the catalog as it
@@ -154,9 +147,6 @@ function WorkspaceLabelDialog({
     setNameError(null);
     setSubmitError(null);
     setIsPending(false);
-    if (request) {
-      setCanRename(canRenameWorkspaceLabelEverywhere(readWorkspaceLabelCatalogHosts()));
-    }
   }
 
   useEffect(() => {
@@ -237,13 +227,6 @@ function WorkspaceLabelDialog({
       );
       return false;
     }
-    // A rename that lands on some hosts and not others leaves two labels rather than one, because
-    // the name is the identity — so a host too old for the RPC blocks the rename instead of being
-    // skipped the way a colour write skips it.
-    if (!canRename && plan.steps.some((step) => step.kind === "rename")) {
-      setNameError(t("settings.labels.renameUnsupported"));
-      return false;
-    }
     for (const step of plan.steps) {
       const verdict = await runStep(deps, step);
       if (verdict.status !== "ok") {
@@ -255,7 +238,7 @@ function WorkspaceLabelDialog({
       if (step.kind === "rename") renameLabelFilter(step.from, step.to);
     }
     return true;
-  }, [canRename, color, deps, known, name, original, originalColor, renameLabelFilter, t]);
+  }, [color, deps, known, name, original, originalColor, renameLabelFilter, t]);
 
   const handleSave = useCallback(() => {
     if (isPending || !request) return;

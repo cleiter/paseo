@@ -1902,7 +1902,6 @@ export const fr: TranslationResources = {
       nameTaken: "Une étiquette porte déjà ce nom.",
       colorLabel: "Couleur",
       colorAutomatic: "Utiliser la couleur automatique",
-      renameUnsupported: "Mettez à jour tous les hôtes avant de renommer une étiquette.",
       create: "Créer",
       save: "Enregistrer",
       saving: "Enregistrement...",

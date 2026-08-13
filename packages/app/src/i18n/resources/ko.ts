@@ -1864,7 +1864,6 @@ export const ko: TranslationResources = {
       nameTaken: "같은 이름의 라벨이 이미 있습니다.",
       colorLabel: "색상",
       colorAutomatic: "자동 색상 사용",
-      renameUnsupported: "라벨 이름을 변경하려면 먼저 모든 호스트를 업데이트하세요.",
       create: "만들기",
       save: "저장",
       saving: "저장 중...",

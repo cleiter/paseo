@@ -1871,7 +1871,6 @@ export const ja: TranslationResources = {
       nameTaken: "その名前のラベルはすでに存在します。",
       colorLabel: "色",
       colorAutomatic: "自動の色を使う",
-      renameUnsupported: "ラベル名を変更する前にすべてのホストを更新してください。",
       create: "作成",
       save: "保存",
       saving: "保存中...",

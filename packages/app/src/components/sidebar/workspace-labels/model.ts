@@ -128,16 +128,14 @@ export function useWorkspaceLabelCatalogHosts(): WorkspaceLabelCatalogHost[] {
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const statuses = useHostRuntimeConnectionStatuses(serverIds);
   const supported = useHostFeatureMap(serverIds, "workspaceLabels");
-  const renameSupported = useHostFeatureMap(serverIds, "workspaceLabelRename");
   return useMemo(
     () =>
       serverIds.map((serverId) => ({
         serverId,
         connected: statuses.get(serverId) === "online",
         supported: supported.get(serverId) === true,
-        supportsRename: renameSupported.get(serverId) === true,
       })),
-    [serverIds, statuses, supported, renameSupported],
+    [serverIds, statuses, supported],
   );
 }
 
@@ -154,7 +152,6 @@ export function readWorkspaceLabelCatalogHosts(): WorkspaceLabelCatalogHost[] {
     serverId: host.serverId,
     connected: runtime.getClient(host.serverId) !== null,
     supported: selectHostFeature(sessionState, host.serverId, "workspaceLabels"),
-    supportsRename: selectHostFeature(sessionState, host.serverId, "workspaceLabelRename"),
   }));
 }
 

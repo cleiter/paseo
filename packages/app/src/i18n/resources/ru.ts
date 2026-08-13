@@ -1889,7 +1889,6 @@ export const ru: TranslationResources = {
       nameTaken: "Метка с таким именем уже существует.",
       colorLabel: "Цвет",
       colorAutomatic: "Использовать автоматический цвет",
-      renameUnsupported: "Обновите все хосты, прежде чем переименовывать метку.",
       create: "Создать",
       save: "Сохранить",
       saving: "Сохранение...",

@@ -1883,7 +1883,6 @@ export const ptBR: TranslationResources = {
       nameTaken: "Já existe uma etiqueta com esse nome.",
       colorLabel: "Cor",
       colorAutomatic: "Usar cor automática",
-      renameUnsupported: "Atualize todos os hosts antes de renomear uma etiqueta.",
       create: "Criar",
       save: "Salvar",
       saving: "Salvando...",

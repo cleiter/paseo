@@ -22,8 +22,6 @@ export interface WorkspaceLabelCatalogHost {
   connected: boolean;
   /** `server_info.features.workspaceLabels`. */
   supported: boolean;
-  /** `server_info.features.workspaceLabelRename`, which shipped after the rest of labels. */
-  supportsRename: boolean;
 }
 
 /**
@@ -35,21 +33,6 @@ export function selectWorkspaceLabelCatalogTargets(
   hosts: readonly WorkspaceLabelCatalogHost[],
 ): string[] {
   return hosts.filter((host) => host.connected && host.supported).map((host) => host.serverId);
-}
-
-/**
- * Rename is all-or-nothing across hosts, unlike the other writes.
- *
- * A colour that lands on some hosts leaves one label wearing whichever colour wins the merge. A
- * *name* that lands on some hosts leaves two labels — the old name and the new one, side by side
- * in the sidebar, because the name is the identity. So a host that cannot take the rename disables
- * it rather than being skipped: a partial rename is worse than no rename.
- */
-export function canRenameWorkspaceLabelEverywhere(
-  hosts: readonly WorkspaceLabelCatalogHost[],
-): boolean {
-  const reachable = hosts.filter((host) => host.connected && host.supported);
-  return reachable.length > 0 && reachable.every((host) => host.supportsRename);
 }
 
 export type WorkspaceLabelCatalogWriteVerdict =
@@ -134,7 +117,6 @@ export function resetWorkspaceLabelColorEverywhere(
  * Renames a label on every host. Each daemon does its own sweep over the workspaces it holds —
  * the name is the identity, so there is no id to repoint, and the daemon is the one holding them.
  *
- * Gate this on `canRenameWorkspaceLabelEverywhere` rather than letting the fan-out skip hosts.
  */
 export function renameWorkspaceLabelEverywhere(
   deps: WorkspaceLabelCatalogWriteDeps,

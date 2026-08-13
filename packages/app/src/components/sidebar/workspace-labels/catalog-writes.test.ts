@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  canRenameWorkspaceLabelEverywhere,
   canWriteWorkspaceLabelCatalog,
   deleteWorkspaceLabelEverywhere,
   renameWorkspaceLabelEverywhere,
@@ -12,11 +11,9 @@ import {
   type WorkspaceLabelCatalogHost,
 } from "./catalog-writes";
 
-const ONLINE = { serverId: "a", connected: true, supported: true, supportsRename: true };
-const OFFLINE = { serverId: "b", connected: false, supported: true, supportsRename: true };
-const OLD = { serverId: "c", connected: true, supported: false, supportsRename: false };
-// Ships labels, predates the rename RPC.
-const NO_RENAME = { serverId: "e", connected: true, supported: true, supportsRename: false };
+const ONLINE = { serverId: "a", connected: true, supported: true };
+const OFFLINE = { serverId: "b", connected: false, supported: true };
+const OLD = { serverId: "c", connected: true, supported: false };
 
 function stubClient(): WorkspaceLabelCatalogClient & {
   setWorkspaceLabelColor: ReturnType<typeof vi.fn>;
@@ -34,7 +31,7 @@ describe("selectWorkspaceLabelCatalogTargets", () => {
   it("writes to every connected host that supports labels, not just the one in front of you", () => {
     const targets = selectWorkspaceLabelCatalogTargets([
       ONLINE,
-      { serverId: "d", connected: true, supported: true, supportsRename: true },
+      { serverId: "d", connected: true, supported: true },
     ]);
     expect(targets).toEqual(["a", "d"]);
   });
@@ -88,12 +85,7 @@ describe("catalog writes", () => {
     const clients: Record<string, WorkspaceLabelCatalogClient> = { a: first, d: second };
     const verdict = await setWorkspaceLabelColorEverywhere(
       {
-        getHosts: () => [
-          ONLINE,
-          OFFLINE,
-          OLD,
-          { serverId: "d", connected: true, supported: true, supportsRename: true },
-        ],
+        getHosts: () => [ONLINE, OFFLINE, OLD, { serverId: "d", connected: true, supported: true }],
         getClient: (serverId) => clients[serverId] ?? null,
       },
       { name: "blocked", color: "red" },
@@ -137,10 +129,7 @@ describe("catalog writes", () => {
     const clients: Record<string, WorkspaceLabelCatalogClient> = { a: good, d: bad };
     const verdict = await setWorkspaceLabelColorEverywhere(
       {
-        getHosts: () => [
-          ONLINE,
-          { serverId: "d", connected: true, supported: true, supportsRename: true },
-        ],
+        getHosts: () => [ONLINE, { serverId: "d", connected: true, supported: true }],
         getClient: (serverId) => clients[serverId] ?? null,
       },
       { name: "blocked", color: "red" },
@@ -154,34 +143,15 @@ describe("catalog writes", () => {
   });
 });
 
-describe("canRenameWorkspaceLabelEverywhere", () => {
-  it("allows a rename when every reachable host can take it", () => {
-    expect(canRenameWorkspaceLabelEverywhere([ONLINE, OFFLINE, OLD])).toBe(true);
-  });
-
-  // A partial rename leaves the old name on one host and the new one on another, and because the
-  // name is the identity that reads as two labels rather than one label mid-flight.
-  it("refuses when a reachable host ships labels but not the rename", () => {
-    expect(canRenameWorkspaceLabelEverywhere([ONLINE, NO_RENAME])).toBe(false);
-  });
-
-  it("refuses when there is no host to rename on at all", () => {
-    expect(canRenameWorkspaceLabelEverywhere([OFFLINE, OLD])).toBe(false);
-  });
-});
-
 describe("renameWorkspaceLabelEverywhere", () => {
-  it("renames on every connected host", async () => {
+  it("renames on every connected host that supports workspaceLabels", async () => {
     const first = stubClient();
     const second = stubClient();
     const clients: Record<string, WorkspaceLabelCatalogClient> = { a: first, d: second };
 
     const verdict = await renameWorkspaceLabelEverywhere(
       {
-        getHosts: () => [
-          ONLINE,
-          { serverId: "d", connected: true, supported: true, supportsRename: true },
-        ],
+        getHosts: () => [ONLINE, { serverId: "d", connected: true, supported: true }],
         getClient: (serverId) => clients[serverId] ?? null,
       },
       { from: "blocked", to: "waiting" },

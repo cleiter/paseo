@@ -307,6 +307,21 @@ describe("agent detach RPC", () => {
     expect(parsed.features?.agentDetach).toBe(true);
   });
 
+  test("parses the unified workspaceLabels feature gate", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      features: {
+        workspaceLabels: true,
+      },
+    });
+
+    if (!parsed) {
+      throw new Error("Expected server info payload to parse");
+    }
+    expect(parsed.features?.workspaceLabels).toBe(true);
+  });
+
   test("parses the workspace-targeted session import feature gate", () => {
     const parsed = parseServerInfoStatusPayload({
       status: "server_info",

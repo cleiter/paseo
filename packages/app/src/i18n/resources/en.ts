@@ -1865,7 +1865,6 @@ export const en = {
       nameTaken: "A label with that name already exists.",
       colorLabel: "Color",
       colorAutomatic: "Use automatic color",
-      renameUnsupported: "Update every host before renaming a label.",
       create: "Create",
       save: "Save",
       saving: "Saving...",

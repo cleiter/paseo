@@ -1834,7 +1834,6 @@ export const zhCN: TranslationResources = {
       nameTaken: "已存在同名标签。",
       colorLabel: "颜色",
       colorAutomatic: "使用自动颜色",
-      renameUnsupported: "重命名标签前请先更新所有主机。",
       create: "创建",
       save: "保存",
       saving: "保存中...",
