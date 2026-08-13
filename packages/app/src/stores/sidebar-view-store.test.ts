@@ -164,7 +164,7 @@ describe("sidebar view store", () => {
     expect(useSidebarViewStore.getState().projectFilters).toEqual([]);
   });
 
-  it("keeps persisted project filters and drops entries it cannot read", () => {
+  it("rejects the complete persisted view when a project filter is invalid", () => {
     expect(
       migrateSidebarViewState({
         groupMode: "project",
@@ -173,7 +173,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "project",
       hostFilters: [],
-      projectFilters: ["alpha", "beta"],
+      projectFilters: [],
       labelFilters: {},
       // Absent from the payload and read as "any" — the mode every persisted state predates.
       labelMatch: "any",
@@ -377,7 +377,7 @@ describe("sidebar view store", () => {
     expect(useSidebarViewStore.getState().labelFilters).toBe(before);
   });
 
-  it("keeps persisted label filters and drops entries it cannot read", () => {
+  it("rejects the complete persisted view when a label filter is invalid", () => {
     expect(
       migrateSidebarViewState({
         groupMode: "project",
@@ -387,7 +387,7 @@ describe("sidebar view store", () => {
       groupMode: "project",
       hostFilters: [],
       projectFilters: [],
-      labelFilters: { blocked: "include" },
+      labelFilters: {},
       labelMatch: "any",
       savedViews: [],
       activeSavedViewId: null,
@@ -653,7 +653,7 @@ describe("sidebar view store", () => {
     expect(state.savedViews[0]?.labelFilters).toEqual({ blocked: "exclude" });
   });
 
-  it("drops persisted views it cannot read, and forgets an active id with no view", () => {
+  it("rejects the complete persisted view list when one entry is invalid", () => {
     expect(
       migrateSidebarViewState({
         groupMode: "project",
@@ -671,17 +671,7 @@ describe("sidebar view store", () => {
       projectFilters: [],
       labelFilters: {},
       labelMatch: "any",
-      savedViews: [
-        {
-          id: "view-1",
-          name: "Blocked",
-          groupMode: "status",
-          hostFilters: [],
-          projectFilters: [],
-          labelFilters: { oss: "exclude" },
-          labelMatch: "any",
-        },
-      ],
+      savedViews: [],
       activeSavedViewId: null,
     });
   });
