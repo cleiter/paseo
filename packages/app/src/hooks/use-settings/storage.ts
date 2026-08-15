@@ -115,6 +115,7 @@ const StoredAppSettingsSchema = z.strictObject({
   syntaxTheme: z.string().refine(isSyntaxThemeId).optional(),
   workspaceTitleSource: z.enum(["title", "branch"]).optional(),
   sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).optional(),
+  setupTabAutoOpen: z.enum(["always", "untilSuccess", "onFailure"]).optional(),
   sidebarRowItems: SidebarRowItemsSchema.optional(),
   sidebarChecksDisplay: z.enum(["iconAndText", "icon", "none"]).optional(),
   autoExpandReasoning: z.boolean().optional(),
