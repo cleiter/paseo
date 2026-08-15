@@ -23,19 +23,27 @@ export interface AssistantFileLinkResolverConfig {
   workspaceRoot?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
   toast?: ToastApi | null;
+}
+
+export interface AssistantFileLinkResolverProviderProps extends AssistantFileLinkResolverConfig {
   // Recognizes a leading-slash inline-code token (bare command name, no slash)
   // as a known slash command / skill for the current agent, so the code_inline
   // rule can render it as a command chip instead of a file link.
   isSlashCommand?: (name: string) => boolean;
-}
-
-export interface AssistantFileLinkResolverProviderProps extends AssistantFileLinkResolverConfig {
   children: ReactNode;
 }
 
 export interface AssistantFileLinkResolverContextValue {
   configRef: MutableRefObject<AssistantFileLinkResolverConfig>;
   getDirectorySuggestions: GetDirectorySuggestions;
+  // Carried by value, unlike the rest of the config, because it decides what a
+  // token *renders as* rather than what a press *does*. The per-agent command
+  // list arrives from the network after the transcript first renders, and
+  // AssistantMessage is memoized, so a configRef mutation would never reach an
+  // already-rendered history message. A context value change re-renders every
+  // consumer even behind memo, which is what makes late-arriving commands show
+  // up as chips.
+  isSlashCommand?: (name: string) => boolean;
 }
 
 const AssistantFileLinkResolverContext =
@@ -56,7 +64,6 @@ export function AssistantFileLinkResolverProvider({
     workspaceRoot,
     onOpenWorkspaceFile,
     toast,
-    isSlashCommand,
   });
   configRef.current = {
     client,
@@ -64,7 +71,6 @@ export function AssistantFileLinkResolverProvider({
     workspaceRoot,
     onOpenWorkspaceFile,
     toast,
-    isSlashCommand,
   };
 
   const getDirectorySuggestions = useCallback<GetDirectorySuggestions>(async (input) => {
@@ -78,8 +84,8 @@ export function AssistantFileLinkResolverProvider({
   }, []);
 
   const value = useMemo<AssistantFileLinkResolverContextValue>(
-    () => ({ configRef, getDirectorySuggestions }),
-    [getDirectorySuggestions],
+    () => ({ configRef, getDirectorySuggestions, isSlashCommand }),
+    [getDirectorySuggestions, isSlashCommand],
   );
 
   return (

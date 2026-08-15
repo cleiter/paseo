@@ -157,9 +157,13 @@ export function useAssistantFileLinkActions(): AssistantFileLinkActions {
       canResolveAssistantFileLinkToFile(source, context.configRef.current.workspaceRoot),
     [context.configRef],
   );
+  // Read off the context value, not configRef: this feeds a render decision, so
+  // its identity has to change when the command list loads (see the note on
+  // AssistantFileLinkResolverContextValue.isSlashCommand).
+  const contextIsSlashCommand = context.isSlashCommand;
   const isSlashCommand = useCallback(
-    (name: string) => context.configRef.current.isSlashCommand?.(name) ?? false,
-    [context.configRef],
+    (name: string) => contextIsSlashCommand?.(name) ?? false,
+    [contextIsSlashCommand],
   );
 
   return useMemo(
