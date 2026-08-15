@@ -9,6 +9,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { isNative, isWeb } from "@/constants/platform";
 import { MarkdownTextSpan } from "@/components/markdown-text";
 import { MarkdownLinkText } from "@/components/markdown/link-text";
@@ -229,6 +230,7 @@ export function AssistantInlineSlashCommandLink({
   codeInlineStyle,
   linkStyle,
 }: AssistantInlineSlashCommandLinkProps) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const composerInsert = useComposerInsert();
   const style = useMemo(
@@ -250,11 +252,11 @@ export function AssistantInlineSlashCommandLink({
     () => (
       <View style={styles.tooltipBody}>
         <Text selectable={false} style={styles.tooltipPath}>
-          Insert into composer
+          {t("message.actions.insertIntoComposer")}
         </Text>
       </View>
     ),
-    [],
+    [t],
   );
 
   if (isNative) {
