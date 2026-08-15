@@ -1377,7 +1377,9 @@ function WorkspaceRowWithMenu({
         archiveStatus={isArchiving ? "pending" : "idle"}
         archivePendingLabel={t("sidebar.workspace.actions.archiving")}
         onArchive={handleArchive}
-        onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
+        onCopyBranchName={
+          canCopyBranchName && workspace.currentBranch ? handleCopyBranchName : undefined
+        }
         onCopyPath={handleCopyPath}
         onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
