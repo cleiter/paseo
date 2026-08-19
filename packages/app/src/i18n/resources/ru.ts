@@ -1007,9 +1007,6 @@ export const ru: TranslationResources = {
     },
     filter: {
       clear: "Очистить фильтр",
-      noMatchesTitle: "Нет подходящих рабочих пространств",
-      noMatchesDescription:
-        "Измените или очистите фильтр меток, чтобы увидеть рабочие пространства.",
     },
     manage: {
       open: "Управление метками…",
@@ -1065,6 +1062,16 @@ export const ru: TranslationResources = {
         label: "Хост",
         all: "Все хосты",
       },
+      projectFilter: {
+        label: "Проект",
+        all: "Все проекты",
+      },
+    },
+    filterEmpty: {
+      title: "Нет подходящих рабочих пространств",
+      description:
+        "Измените или очистите фильтры боковой панели, чтобы увидеть рабочие пространства.",
+      clear: "Очистить фильтры",
     },
     pinned: {
       title: "Закреплённые",
