@@ -96,6 +96,7 @@ import {
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
+import { resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -1486,6 +1487,10 @@ function ComposerContentImpl({
     }
     return false;
   });
+  const activeSendBehavior = resolveActiveSendBehavior(
+    appSettings.sendBehavior,
+    hasPendingPermission,
+  );
   const hasAgent = agentState.status !== null;
 
   const queueWriter = useMemo<QueueWriter>(
@@ -2312,8 +2317,7 @@ function ComposerContentImpl({
                   voiceServerId={serverId}
                   voiceAgentId={agentId}
                   isAgentRunning={isAgentRunning}
-                  hasPendingPermission={hasPendingPermission}
-                  defaultSendBehavior={appSettings.sendBehavior}
+                  defaultSendBehavior={activeSendBehavior}
                   onQueue={handleQueue}
                   onSubmitLoadingPress={submitLoadingPressHandler}
                   onKeyPress={handleCommandKeyPress}

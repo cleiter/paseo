@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { PermissionResult, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import * as executableUtils from "../../../../executable-resolution/executable-resolution.js";
@@ -877,6 +877,110 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  test("a human steer supersedes blocking permissions until Claude reads it", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const internal = session as unknown as {
+      handlePermissionRequest(
+        name: string,
+        input: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ): Promise<PermissionResult>;
+      translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
+    };
+
+    try {
+      const { turnId } = await session.startTurn("first turn");
+      const input = queryFactory.mock.calls[0]?.[0].prompt as AsyncIterable<SDKUserMessage>;
+      const iterator = input[Symbol.asyncIterator]();
+      await iterator.next();
+
+      const firstPermission = internal.handlePermissionRequest(
+        "ExitPlanMode",
+        { plan: "First plan" },
+        { toolUseID: "tool-1" },
+      );
+      expect(session.getPendingPermissions()).toHaveLength(1);
+
+      await expect(
+        session.steerActiveTurn?.("review this instead", {
+          expectedTurnId: turnId,
+          clearPendingPermissions: true,
+        }),
+      ).resolves.toEqual({ status: "accepted" });
+      await expect(firstPermission).resolves.toMatchObject({
+        behavior: "deny",
+        interrupt: undefined,
+        message: expect.stringContaining("message instead of approving"),
+      });
+
+      const steer = await iterator.next();
+      const steerUuid = steer.value?.uuid;
+      expect(steerUuid).toEqual(expect.any(String));
+
+      await expect(
+        internal.handlePermissionRequest(
+          "Write",
+          { file_path: "SECOND.md" },
+          { toolUseID: "tool-2" },
+        ),
+      ).resolves.toMatchObject({ behavior: "deny", interrupt: undefined });
+
+      internal.translateMessageToEvents({
+        type: "command_lifecycle",
+        command_uuid: steerUuid,
+        state: "started",
+      } as unknown as SDKMessage);
+      const laterPermission = internal.handlePermissionRequest(
+        "Write",
+        { file_path: "LATER.md" },
+        { toolUseID: "tool-3" },
+      );
+      expect(session.getPendingPermissions()).toHaveLength(1);
+      const requestId = session.getPendingPermissions()[0]!.id;
+      await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
+      await expect(laterPermission).resolves.toMatchObject({ behavior: "deny" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a non-human steer leaves a pending permission for the user", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const internal = session as unknown as {
+      handlePermissionRequest(
+        name: string,
+        input: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ): Promise<PermissionResult>;
+    };
+
+    try {
+      const { turnId } = await session.startTurn("first turn");
+      const permission = internal.handlePermissionRequest("Write", {}, { toolUseID: "tool-1" });
+      await expect(
+        session.steerActiveTurn?.("system notification", { expectedTurnId: turnId }),
+      ).resolves.toEqual({ status: "accepted" });
+      expect(session.getPendingPermissions()).toHaveLength(1);
+      const requestId = session.getPendingPermissions()[0]!.id;
+      await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
+      await expect(permission).resolves.toMatchObject({ behavior: "deny" });
+    } finally {
+      await session.close();
+    }
+  });
+
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
     ["unsupported model", "claude-fable-5", { type: "adaptive" }, "high"],
@@ -1212,10 +1316,8 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
       );
       expect(planRow).toBeDefined();
       const item = (planRow as { item: Extract<AgentTimelineItem, { type: "tool_call" }> }).item;
-      expect(item.detail).toMatchObject({
-        input: { plan: "Ship the thing" },
-        output: { approved: false },
-      });
+      expect(item.detail).toEqual({ type: "plan", text: "Ship the thing" });
+      expect(item.metadata).toMatchObject({ approved: false });
     } finally {
       unsubscribe();
       await session.close();

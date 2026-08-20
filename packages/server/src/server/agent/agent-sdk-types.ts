@@ -214,9 +214,14 @@ export interface AgentRunOptions {
   clientMessageId?: string;
 }
 
+export interface AgentSteerOptions extends AgentRunOptions {
+  /** Deny permissions that block this steer. An accepted steer must honor this contract. */
+  clearPendingPermissions?: boolean;
+}
+
 export type SteerResult = { status: "accepted" } | { status: "unavailable" };
 
-export interface SteerActiveTurnOptions extends AgentRunOptions {
+export interface SteerActiveTurnOptions extends AgentSteerOptions {
   expectedTurnId: string;
 }
 
@@ -636,16 +641,6 @@ export interface AgentSession {
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
-  /**
-   * Whether a steer this session accepted is still queued and unread.
-   *
-   * Providers whose permission prompt blocks the turn (Claude parks inside its
-   * permission callback) cannot read a queued steer until every request in the
-   * batch is answered. The manager uses this to know when it has released
-   * enough of them for the prompt to get through. Providers that never park
-   * omit it.
-   */
-  hasUnreadSteer?(): boolean;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
