@@ -2302,6 +2302,10 @@ class ClaudeAgentSession implements AgentSession {
     return { status: "accepted" };
   }
 
+  hasUnreadSteer(): boolean {
+    return this.queuedSteerUuids.size > 0;
+  }
+
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
     return () => {
@@ -2469,6 +2473,44 @@ class ClaudeAgentSession implements AgentSession {
     return Array.from(this.pendingPermissions.values()).map((entry) => entry.request);
   }
 
+  /**
+   * A denied request is the only record the transcript gets. Plans especially:
+   * the pending card is the only place the plan text lives, so losing it means
+   * the user can no longer read what they just declined.
+   */
+  private recordDeniedPermissionTimeline(
+    request: AgentPermissionRequest,
+    response: Extract<AgentPermissionResponse, { behavior: "deny" }>,
+  ): void {
+    if (request.kind === "tool") {
+      this.pushToolCall(
+        mapClaudeFailedToolCall({
+          name: request.name,
+          callId:
+            (typeof request.metadata?.toolUseId === "string" ? request.metadata.toolUseId : null) ??
+            request.id,
+          input: request.input ?? null,
+          output: null,
+          error: { message: response.message ?? "Permission denied" },
+        }),
+      );
+      return;
+    }
+    if (request.kind === "plan") {
+      this.pushToolCall(
+        mapClaudeCompletedToolCall({
+          name: "plan_approval",
+          callId: request.id,
+          input: request.input ?? null,
+          output: {
+            approved: false,
+            actionId: response.selectedActionId ?? "reject",
+          },
+        }),
+      );
+    }
+  }
+
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
@@ -2512,20 +2554,7 @@ class ClaudeAgentSession implements AgentSession {
       };
       pending.resolve(result);
     } else {
-      if (pending.request.kind === "tool") {
-        this.pushToolCall(
-          mapClaudeFailedToolCall({
-            name: pending.request.name,
-            callId:
-              (typeof pending.request.metadata?.toolUseId === "string"
-                ? pending.request.metadata.toolUseId
-                : null) ?? pending.request.id,
-            input: pending.request.input ?? null,
-            output: null,
-            error: { message: response.message ?? "Permission denied" },
-          }),
-        );
-      }
+      this.recordDeniedPermissionTimeline(pending.request, response);
       const result: PermissionResult = {
         behavior: "deny",
         message: response.message ?? "Permission request denied",

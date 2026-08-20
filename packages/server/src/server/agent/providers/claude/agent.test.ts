@@ -1162,6 +1162,66 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
     }
   });
 
+  test("denying a plan leaves the plan readable in the timeline", async () => {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    const request = {
+      id: "permission-plan-1",
+      provider: "claude",
+      name: "ExitPlanMode",
+      kind: "plan",
+      input: { plan: "Ship the thing" },
+    };
+
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    new Promise<unknown>((resolve, reject) => {
+      (
+        session as unknown as {
+          pendingPermissions: Map<
+            string,
+            {
+              request: typeof request;
+              resolve: (value: unknown) => void;
+              reject: (error: Error) => void;
+            }
+          >;
+        }
+      ).pendingPermissions.set(request.id, { request, resolve, reject });
+    }).catch(() => undefined);
+
+    try {
+      await session.respondToPermission(request.id, {
+        behavior: "deny",
+        message: "The user answered with a message instead of approving.",
+      });
+
+      const planRow = events.find(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.name === "plan_approval",
+      );
+      expect(planRow).toBeDefined();
+      const item = (planRow as { item: Extract<AgentTimelineItem, { type: "tool_call" }> }).item;
+      expect(item.detail).toMatchObject({
+        input: { plan: "Ship the thing" },
+        output: { approved: false },
+      });
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
   test("respondToPermission maps other answer text back to Claude question keys", async () => {
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),

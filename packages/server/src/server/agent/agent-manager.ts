@@ -2798,6 +2798,15 @@ export class AgentManager {
     return Array.from(agent.pendingPermissions.values());
   }
 
+  /**
+   * Whether a steer this agent accepted is still queued and unread. False for
+   * providers that do not park their turn on a permission prompt.
+   */
+  hasUnreadSteer(agentId: string): boolean {
+    const agent = this.requireSessionAgent(agentId);
+    return agent.session.hasUnreadSteer?.() ?? false;
+  }
+
   private peekPendingPermission(agent: ManagedAgent): AgentPermissionRequest | null {
     const iterator = agent.pendingPermissions.values().next();
     return iterator.done ? null : iterator.value;

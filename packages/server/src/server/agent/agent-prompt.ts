@@ -21,15 +21,154 @@ export type AgentRunController = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
+  | "getPendingPermissions"
+  | "respondToPermission"
+  | "hasUnreadSteer"
 >;
 
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
   activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
+  /**
+   * Deny every pending permission once the prompt is admitted into the active
+   * turn. Only user-originated prompts set this: answering with a message is a
+   * human deciding not to press the button, so a scheduled or system-injected
+   * prompt must never resolve a card the human is still looking at.
+   */
+  resolvePendingPermissions?: boolean;
 }
 
 export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
+
+/**
+ * Fed to the provider as the denial reason, so the agent knows the user chose
+ * to reply rather than approve. The steered prompt itself follows in the same
+ * turn.
+ */
+const PROMPT_INSTEAD_OF_APPROVAL_MESSAGE =
+  "The user answered with a message instead of approving. Their message follows.";
+
+/** How long the release keeps answering requests before it gives up. */
+const RELEASE_TIMEOUT_MS = 15_000;
+/** Gap between polls while waiting for the provider to open or read the next one. */
+const RELEASE_POLL_MS = 25;
+/**
+ * How long an empty pending set has to hold, with the prompt still unread,
+ * before the release calls the turn running again. Claude takes anything from
+ * 10ms to ~300ms between answering one request in a batch and opening the next
+ * (measured), so a short window drops out mid-batch and re-parks the turn. Only
+ * a turn that is neither parked nor reading the prompt pays this wait.
+ */
+const RELEASE_SETTLE_MS = 1_500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pendingSignature(pending: readonly AgentPermissionRequest[]): string {
+  return pending
+    .map((request) => request.id)
+    .sort()
+    .join(",");
+}
+
+async function denyPendingPermissions(
+  agentManager: AgentRunController,
+  agentId: string,
+  logger: Logger,
+  pending: readonly AgentPermissionRequest[],
+): Promise<void> {
+  for (const request of pending) {
+    // Sequentially and individually wrapped: the user may have answered a
+    // request in the same instant, and that stale id must not skip the rest.
+    try {
+      await agentManager.respondToPermission(agentId, request.id, {
+        behavior: "deny",
+        // No `interrupt` — cancelling the turn is exactly what this avoids.
+        message: PROMPT_INSTEAD_OF_APPROVAL_MESSAGE,
+      });
+    } catch (error) {
+      logger.warn(
+        { err: error, agentId, requestId: request.id, kind: request.kind },
+        "agent.permission.release_failed",
+      );
+    }
+  }
+}
+
+/**
+ * Deny the permissions the agent is blocked on, until the steered prompt gets
+ * through.
+ *
+ * Providers whose permission prompt blocks the turn (Claude parks inside
+ * `canUseTool`) stop reading their input stream while a request is open, so a
+ * steer that was accepted is queued and never read. Denying releases the
+ * callback.
+ *
+ * One pass is not enough. A turn that made several tool calls opens the next
+ * request within milliseconds of the previous one being answered, so a single
+ * snapshot advances the batch by one and parks the turn again. Keep answering
+ * while `hasUnreadSteer` says the prompt has still not been read — and stop the
+ * moment it has, so a permission the agent asks for *after* reading the prompt
+ * is left for the user.
+ *
+ * Must go through `AgentManager.respondToPermission` — the manager-internal
+ * `resolvePendingPermissionsForAgent` drops the entry without answering the
+ * provider, which is fine after a turn is dead but would leave this one parked
+ * forever.
+ */
+async function releasePendingPermissions(
+  agentManager: AgentRunController,
+  agentId: string,
+  logger: Logger,
+): Promise<void> {
+  // Nothing parked means the turn is running and will read the steer on its
+  // own; there is nothing to release and nothing to wait for.
+  if (agentManager.getPendingPermissions(agentId).length === 0) {
+    return;
+  }
+  const deadline = Date.now() + RELEASE_TIMEOUT_MS;
+  let emptySince: number | null = null;
+  for (;;) {
+    const pending = agentManager.getPendingPermissions(agentId);
+    if (pending.length > 0) {
+      emptySince = null;
+      const before = pendingSignature(pending);
+      await denyPendingPermissions(agentManager, agentId, logger, pending);
+      if (pendingSignature(agentManager.getPendingPermissions(agentId)) === before) {
+        // A provider drops a request it answered, so an unchanged set means the
+        // responses did not take. Retrying cannot improve on that.
+        break;
+      }
+    } else {
+      emptySince ??= Date.now();
+      if (Date.now() - emptySince >= RELEASE_SETTLE_MS) {
+        // The turn is running again and simply has not reached the steer yet —
+        // a long tool call can hold it for minutes. Not this function's problem.
+        break;
+      }
+    }
+    // The prompt is through, so anything the agent asks for from here on is a
+    // decision the user still owns. Providers that never park report no unread
+    // steer and leave on the first pass.
+    if (!agentManager.hasUnreadSteer(agentId)) {
+      break;
+    }
+    if (Date.now() >= deadline) {
+      break;
+    }
+    await sleep(RELEASE_POLL_MS);
+  }
+  const stillPending = agentManager.getPendingPermissions(agentId);
+  if (stillPending.length > 0 && agentManager.hasUnreadSteer(agentId)) {
+    // Still parked with the prompt unread, so reporting a successful steer
+    // would repeat the very bug this release exists to fix. Fail the send.
+    throw new Error(
+      `Could not deliver the message: ${stillPending.length} pending permission request(s) could not be resolved`,
+    );
+  }
+}
 
 async function steerOrReplaceActiveRun(
   agentManager: AgentRunController,
@@ -73,6 +212,23 @@ async function startOrReplaceRun(
   return { iterator, replaced };
 }
 
+/**
+ * Order matters: the prompt is already queued on the provider's input stream,
+ * so releasing here means the provider reads it the moment the permission
+ * callback returns.
+ */
+async function finishSteeredRun(
+  agentManager: AgentRunController,
+  agentId: string,
+  logger: Logger,
+  options: StartAgentRunOptions | undefined,
+): Promise<void> {
+  if (!options?.resolvePendingPermissions) {
+    return;
+  }
+  await releasePendingPermissions(agentManager, agentId, logger);
+}
+
 export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
@@ -101,6 +257,7 @@ export async function startAgentRun(
   }
   const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
   if (steered?.disposition === "steered") {
+    await finishSteeredRun(agentManager, agentId, logger, options);
     return steered;
   }
   const { iterator, replaced } = steered
@@ -193,6 +350,8 @@ export interface SendPromptToAgentParams {
    * schedule fires, notify-on-finish).
    */
   unarchive?: boolean;
+  /** See {@link StartAgentRunOptions.resolvePendingPermissions}. */
+  resolvePendingPermissions?: boolean;
   logger: Logger;
 }
 
@@ -262,6 +421,7 @@ export async function sendPromptToAgent(
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
     activeTurnBehavior: params.activeTurnBehavior,
+    resolvePendingPermissions: params.resolvePendingPermissions,
     runOptions,
   });
 }

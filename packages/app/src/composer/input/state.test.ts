@@ -6,6 +6,7 @@ import {
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
+  shouldQueueByDefault,
   stopRealtimeVoice,
 } from "./state";
 
@@ -172,6 +173,7 @@ describe("dictation transcript behavior", () => {
       value: "typed context",
       defaultSendBehavior: "interrupt",
       isAgentRunning: false,
+      hasPendingPermission: false,
       onQueue: undefined,
       replaceText: (text) => actions.push(`replace:${text}`),
       onSubmit: (payload) => actions.push(`submit:${payload.text}`),
@@ -203,6 +205,7 @@ describe("composer send behavior", () => {
     runDefaultSendAction({
       defaultSendBehavior: "interrupt",
       isAgentRunning: true,
+      hasPendingPermission: false,
       onQueue: defaultAction.onQueue,
       handleSendMessage: defaultAction.handleSendMessage,
       handleQueueMessage: defaultAction.handleQueueMessage,
@@ -212,6 +215,7 @@ describe("composer send behavior", () => {
     runAlternateSendAction({
       defaultSendBehavior: "interrupt",
       isAgentRunning: true,
+      hasPendingPermission: false,
       onQueue: alternateAction.onQueue,
       handleSendMessage: alternateAction.handleSendMessage,
       handleQueueMessage: alternateAction.handleQueueMessage,
@@ -226,6 +230,7 @@ describe("composer send behavior", () => {
     runDefaultSendAction({
       defaultSendBehavior: "steer",
       isAgentRunning: true,
+      hasPendingPermission: false,
       onQueue: defaultAction.onQueue,
       handleSendMessage: defaultAction.handleSendMessage,
       handleQueueMessage: defaultAction.handleQueueMessage,
@@ -235,6 +240,7 @@ describe("composer send behavior", () => {
     runAlternateSendAction({
       defaultSendBehavior: "steer",
       isAgentRunning: true,
+      hasPendingPermission: false,
       onQueue: alternateAction.onQueue,
       handleSendMessage: alternateAction.handleSendMessage,
       handleQueueMessage: alternateAction.handleQueueMessage,
@@ -249,6 +255,7 @@ describe("composer send behavior", () => {
     runDefaultSendAction({
       defaultSendBehavior: "queue",
       isAgentRunning: true,
+      hasPendingPermission: false,
       onQueue: defaultAction.onQueue,
       handleSendMessage: defaultAction.handleSendMessage,
       handleQueueMessage: defaultAction.handleQueueMessage,
@@ -258,6 +265,7 @@ describe("composer send behavior", () => {
     runAlternateSendAction({
       defaultSendBehavior: "queue",
       isAgentRunning: true,
+      hasPendingPermission: false,
       onQueue: alternateAction.onQueue,
       handleSendMessage: alternateAction.handleSendMessage,
       handleQueueMessage: alternateAction.handleQueueMessage,
@@ -265,6 +273,67 @@ describe("composer send behavior", () => {
 
     expect(defaultAction.calls).toEqual(["queue"]);
     expect(alternateAction.calls).toEqual(["send"]);
+  });
+
+  it("sends instead of queueing while the agent is blocked on a permission", () => {
+    const defaultAction = actions();
+    runDefaultSendAction({
+      defaultSendBehavior: "queue",
+      isAgentRunning: true,
+      hasPendingPermission: true,
+      onQueue: defaultAction.onQueue,
+      handleSendMessage: defaultAction.handleSendMessage,
+      handleQueueMessage: defaultAction.handleQueueMessage,
+    });
+
+    const alternateAction = actions();
+    runAlternateSendAction({
+      defaultSendBehavior: "queue",
+      isAgentRunning: true,
+      hasPendingPermission: true,
+      onQueue: alternateAction.onQueue,
+      handleSendMessage: alternateAction.handleSendMessage,
+      handleQueueMessage: alternateAction.handleQueueMessage,
+    });
+
+    expect(defaultAction.calls).toEqual(["send"]);
+    expect(alternateAction.calls).toEqual(["send"]);
+  });
+
+  it("submits an auto-sent transcript instead of queueing it while a permission is pending", () => {
+    const calls: string[] = [];
+
+    applyDictationTranscript("spoken prompt", {
+      value: "",
+      defaultSendBehavior: "queue",
+      isAgentRunning: true,
+      hasPendingPermission: true,
+      onQueue: () => calls.push("queue"),
+      replaceText: (text) => calls.push(`replace:${text}`),
+      onSubmit: (payload) => calls.push(`submit:${payload.text}`),
+      attachments: [],
+      cwd: "/repo",
+      autoSend: true,
+    });
+
+    expect(calls).toEqual(["replace:spoken prompt", "submit:spoken prompt"]);
+  });
+
+  it("still labels the primary action as Queue only while nothing is pending", () => {
+    expect(
+      shouldQueueByDefault({
+        defaultSendBehavior: "queue",
+        isAgentRunning: true,
+        hasPendingPermission: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldQueueByDefault({
+        defaultSendBehavior: "queue",
+        isAgentRunning: true,
+        hasPendingPermission: true,
+      }),
+    ).toBe(false);
   });
 });
 

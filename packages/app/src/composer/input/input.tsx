@@ -80,6 +80,7 @@ import {
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
+  shouldQueueByDefault,
   stopRealtimeVoice,
 } from "./state";
 
@@ -147,6 +148,9 @@ export interface MessageInputProps {
   voiceAgentId?: string;
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
   isAgentRunning?: boolean;
+  /** True while the agent is blocked on a permission request. Suppresses queueing:
+   *  the turn cannot end on its own, so a queued message would never be sent. */
+  hasPendingPermission?: boolean;
   /** Controls what the default send action (Enter, send button, dictation) does when the agent is
    *  running. "interrupt" and "steer" send immediately, "queue" queues. Required so the default
    *  lives only in DEFAULT_CLIENT_SETTINGS. */
@@ -1038,6 +1042,7 @@ interface SendButtonStateInput {
   onSubmitLoadingPress: (() => void) | undefined;
   defaultSendBehavior: "interrupt" | "steer" | "queue";
   isAgentRunning: boolean;
+  hasPendingPermission: boolean;
 }
 
 interface SendButtonStateOutput {
@@ -1051,7 +1056,7 @@ function computeSendButtonState(input: SendButtonStateInput): SendButtonStateOut
     input.isSubmitLoading && typeof input.onSubmitLoadingPress === "function";
   const isSendButtonDisabled =
     input.disabled || (!canPressLoadingButton && (input.isSubmitDisabled || input.isSubmitLoading));
-  const defaultActionQueues = input.defaultSendBehavior === "queue" && input.isAgentRunning;
+  const defaultActionQueues = shouldQueueByDefault(input);
   return { canPressLoadingButton, isSendButtonDisabled, defaultActionQueues };
 }
 
@@ -1086,6 +1091,7 @@ interface ResolvedMessageInputProps {
   voiceServerId: string | undefined;
   voiceAgentId: string | undefined;
   isAgentRunning: boolean;
+  hasPendingPermission: boolean;
   defaultSendBehavior: "interrupt" | "steer" | "queue";
   onQueue: ((payload: MessagePayload) => void) | undefined;
   onSubmitLoadingPress: (() => void) | undefined;
@@ -1133,6 +1139,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     voiceServerId: props.voiceServerId,
     voiceAgentId: props.voiceAgentId,
     isAgentRunning: props.isAgentRunning ?? false,
+    hasPendingPermission: props.hasPendingPermission ?? false,
     defaultSendBehavior: props.defaultSendBehavior,
     onQueue: props.onQueue,
     onSubmitLoadingPress: props.onSubmitLoadingPress,
@@ -1188,6 +1195,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       voiceServerId,
       voiceAgentId,
       isAgentRunning,
+      hasPendingPermission,
       defaultSendBehavior,
       onQueue,
       onSubmitLoadingPress,
@@ -1309,6 +1317,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           value: valueRef.current,
           defaultSendBehavior,
           isAgentRunning,
+          hasPendingPermission,
           onQueue,
           onSubmit,
           replaceText,
@@ -1317,7 +1326,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           autoSend,
         });
       },
-      [replaceText, onSubmit, onQueue, attachments, cwd, isAgentRunning, defaultSendBehavior],
+      [
+        replaceText,
+        onSubmit,
+        onQueue,
+        attachments,
+        cwd,
+        isAgentRunning,
+        hasPendingPermission,
+        defaultSendBehavior,
+      ],
     );
 
     const handleDictationError = useCallback(
@@ -1540,21 +1558,37 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       runDefaultSendAction({
         defaultSendBehavior,
         isAgentRunning,
+        hasPendingPermission,
         onQueue,
         handleSendMessage,
         handleQueueMessage,
       });
-    }, [defaultSendBehavior, isAgentRunning, onQueue, handleQueueMessage, handleSendMessage]);
+    }, [
+      defaultSendBehavior,
+      isAgentRunning,
+      hasPendingPermission,
+      onQueue,
+      handleQueueMessage,
+      handleSendMessage,
+    ]);
 
     const handleAlternateSendAction = useCallback(() => {
       runAlternateSendAction({
         defaultSendBehavior,
         isAgentRunning,
+        hasPendingPermission,
         onQueue,
         handleSendMessage,
         handleQueueMessage,
       });
-    }, [defaultSendBehavior, isAgentRunning, handleSendMessage, handleQueueMessage, onQueue]);
+    }, [
+      defaultSendBehavior,
+      isAgentRunning,
+      hasPendingPermission,
+      handleSendMessage,
+      handleQueueMessage,
+      onQueue,
+    ]);
 
     const getWebTextArea = useCallback(
       (): TextAreaHandle | null => getWebTextAreaImpl(textInputRef.current),
@@ -1660,6 +1694,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         onSubmitLoadingPress,
         defaultSendBehavior,
         isAgentRunning,
+        hasPendingPermission,
       });
     useIosHardwareKeyboardSubmit({
       isEnabled: isInputFocused && !isSendButtonDisabled,

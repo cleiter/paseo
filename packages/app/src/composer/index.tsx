@@ -1476,6 +1476,16 @@ function ComposerContentImpl({
   const beginAgentCancellation = useSessionStore((state) => state.beginAgentCancellation);
   const settleAgentCancellation = useSessionStore((state) => state.settleAgentCancellation);
   const isAgentRunning = hasActiveTurn;
+  // Queueing behind a permission prompt would strand the message: the turn is
+  // parked until the request is answered.
+  const hasPendingPermission = useSessionStore((state) => {
+    const pendingPermissions = state.sessions[serverId]?.pendingPermissions;
+    if (!pendingPermissions) return false;
+    for (const permission of pendingPermissions.values()) {
+      if (permission.agentId === agentId) return true;
+    }
+    return false;
+  });
   const hasAgent = agentState.status !== null;
 
   const queueWriter = useMemo<QueueWriter>(
@@ -2302,6 +2312,7 @@ function ComposerContentImpl({
                   voiceServerId={serverId}
                   voiceAgentId={agentId}
                   isAgentRunning={isAgentRunning}
+                  hasPendingPermission={hasPendingPermission}
                   defaultSendBehavior={appSettings.sendBehavior}
                   onQueue={handleQueue}
                   onSubmitLoadingPress={submitLoadingPressHandler}

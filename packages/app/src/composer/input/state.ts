@@ -39,9 +39,26 @@ interface StopRealtimeVoiceContext {
   voiceAgentId: string | undefined;
 }
 
+/**
+ * Queue mode holds a message until the turn ends. A pending permission parks
+ * the turn — on providers whose permission prompt blocks the input stream it
+ * never ends on its own — so queueing would strand the message. Send instead
+ * and let the daemon resolve the request.
+ */
+export function shouldQueueByDefault(input: {
+  defaultSendBehavior: SendBehavior;
+  isAgentRunning: boolean;
+  hasPendingPermission: boolean;
+}): boolean {
+  return (
+    input.defaultSendBehavior === "queue" && input.isAgentRunning && !input.hasPendingPermission
+  );
+}
+
 interface SendActionContext {
   defaultSendBehavior: SendBehavior;
   isAgentRunning: boolean;
+  hasPendingPermission: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
   handleSendMessage: () => void;
   handleQueueMessage: () => void;
@@ -51,6 +68,7 @@ interface DictationTranscriptContext {
   value: string;
   defaultSendBehavior: SendBehavior;
   isAgentRunning: boolean;
+  hasPendingPermission: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
   onSubmit: (payload: MessagePayload) => void;
   replaceText: (text: string) => void;
@@ -71,7 +89,7 @@ export function applyDictationTranscript(text: string, ctx: DictationTranscriptC
 
   ctx.replaceText(nextValue);
 
-  if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
+  if (shouldQueueByDefault(ctx) && ctx.onQueue) {
     ctx.onQueue({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });
     ctx.replaceText("");
     return;
@@ -111,7 +129,7 @@ export function computeCanStartDictation(input: {
 }
 
 export function runDefaultSendAction(ctx: SendActionContext): void {
-  if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
+  if (shouldQueueByDefault(ctx) && ctx.onQueue) {
     ctx.handleQueueMessage();
     return;
   }
@@ -119,7 +137,7 @@ export function runDefaultSendAction(ctx: SendActionContext): void {
 }
 
 export function runAlternateSendAction(ctx: SendActionContext): void {
-  if (ctx.defaultSendBehavior === "queue") {
+  if (ctx.defaultSendBehavior === "queue" || ctx.hasPendingPermission) {
     ctx.handleSendMessage();
     return;
   }

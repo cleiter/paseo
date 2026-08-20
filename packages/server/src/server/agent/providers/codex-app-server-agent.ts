@@ -4462,6 +4462,31 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private resolvePlanPermission(requestId: string, resolution: AgentPermissionResponse): void {
+    if (resolution.behavior === "deny") {
+      // Every route into a denial lands here — the response handler, a new
+      // prompt superseding the plan, and the server releasing the card so a
+      // typed message can be delivered — so the record of the decision belongs
+      // here rather than in handlePlanPermissionResponse.
+      const planText =
+        this.pendingPermissionHandlers.get(requestId)?.planText ??
+        this.pendingPermissions.get(requestId)?.metadata?.planText;
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: {
+          type: "tool_call",
+          callId: requestId,
+          name: "plan_approval",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "unknown",
+            input: typeof planText === "string" ? { plan: planText } : null,
+            output: { approved: false },
+          },
+        },
+      });
+    }
     this.pendingPermissionHandlers.delete(requestId);
     this.pendingPermissions.delete(requestId);
     this.resolvedPermissionRequests.add(requestId);

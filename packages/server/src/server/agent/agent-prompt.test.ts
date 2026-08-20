@@ -5,11 +5,14 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import {
+  type AgentRunController,
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
   setupFinishNotification,
+  startAgentRun,
 } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
+import type { AgentPermissionRequest } from "./agent-sdk-types.js";
 
 interface CapturedLogger {
   logger: Logger;
@@ -519,4 +522,256 @@ it("does not notify archived callers", async () => {
 
   expect(streamAgentSpy).not.toHaveBeenCalled();
   expect(replaceAgentRunSpy).not.toHaveBeenCalled();
+});
+
+interface PermissionReleaseScenarioOptions {
+  /** Request ids the fake manager refuses to resolve, keyed by attempt. */
+  failingRequestIds?: string[];
+  /** Request ids that stay pending even after a successful-looking response. */
+  stuckRequestIds?: string[];
+  steerStatus?: "steered" | "replaced" | "inactive";
+  /**
+   * Ids the fake provider opens one at a time as each earlier request is
+   * answered — how Claude walks through a batch of tool calls.
+   */
+  followUpRequestIds?: string[];
+  /**
+   * Number of denials after which the fake provider reports the queued steer as
+   * read. Defaults to reading it as soon as nothing is pending.
+   */
+  steerReadAfterDenials?: number;
+}
+
+interface PermissionReleaseScenario {
+  agentManager: AgentRunController;
+  pendingIds(): string[];
+  denials(): Array<{
+    requestId: string;
+    message: string | undefined;
+    interrupt: boolean | undefined;
+  }>;
+  events(): string[];
+}
+
+function createPermissionReleaseScenario(
+  requestIds: string[],
+  options?: PermissionReleaseScenarioOptions,
+): PermissionReleaseScenario {
+  const pending = new Map<string, AgentPermissionRequest>(
+    requestIds.map((id) => [
+      id,
+      { id, provider: "claude", name: "ExitPlanMode", kind: "plan" } as AgentPermissionRequest,
+    ]),
+  );
+  const denials: Array<{
+    requestId: string;
+    message: string | undefined;
+    interrupt: boolean | undefined;
+  }> = [];
+  const events: string[] = [];
+  const followUps = [...(options?.followUpRequestIds ?? [])];
+  let denialCount = 0;
+
+  function hasUnreadSteer(): boolean {
+    if (options?.steerReadAfterDenials !== undefined) {
+      return denialCount < options.steerReadAfterDenials;
+    }
+    // A parked provider cannot read its input until every request is answered.
+    return pending.size > 0 || followUps.length > 0;
+  }
+
+  const agentManager: AgentRunController = {
+    getAgent: () => null,
+    tryRunOutOfBand: () => false,
+    hasInFlightRun: () => true,
+    replaceAgentRun: async () => (async function* noop() {})(),
+    streamAgent: () => {
+      events.push("stream");
+      return (async function* noop() {})();
+    },
+    steerOrReplaceActiveTurn: async () => {
+      events.push("steer");
+      const status = options?.steerStatus ?? "steered";
+      if (status === "replaced") {
+        return { status, iterator: (async function* noop() {})() };
+      }
+      return { status } as Awaited<ReturnType<AgentManager["steerOrReplaceActiveTurn"]>>;
+    },
+    getPendingPermissions: () => Array.from(pending.values()),
+    hasUnreadSteer: () => hasUnreadSteer(),
+    respondToPermission: async (_agentId, requestId, response) => {
+      events.push(`deny:${requestId}`);
+      denialCount += 1;
+      if (options?.failingRequestIds?.includes(requestId)) {
+        // Mirrors the provider: a request the user answered in the same instant
+        // is already gone, so the throw is stale-id noise, not a stuck turn.
+        pending.delete(requestId);
+        throw new Error(`No pending permission request with id '${requestId}'`);
+      }
+      denials.push({
+        requestId,
+        message: response.behavior === "deny" ? response.message : undefined,
+        interrupt: response.behavior === "deny" ? response.interrupt : undefined,
+      });
+      if (!options?.stuckRequestIds?.includes(requestId)) {
+        pending.delete(requestId);
+      }
+      // The provider opens the next request in the batch the moment the
+      // previous one returns.
+      const followUp = followUps.shift();
+      if (followUp) {
+        pending.set(followUp, {
+          id: followUp,
+          provider: "claude",
+          name: "Write",
+          kind: "tool",
+        } as AgentPermissionRequest);
+      }
+    },
+  } as unknown as AgentRunController;
+
+  return {
+    agentManager,
+    pendingIds: () => Array.from(pending.keys()),
+    denials: () => denials,
+    events: () => events,
+  };
+}
+
+test("a steered user prompt denies every pending permission after the steer is admitted", async () => {
+  const scenario = createPermissionReleaseScenario(["req-1", "req-2"]);
+
+  const result = await startAgentRun(
+    scenario.agentManager,
+    "agent-1",
+    "review the plan",
+    createTestLogger(),
+    { activeTurnBehavior: "steer", resolvePendingPermissions: true },
+  );
+
+  expect(result.disposition).toBe("steered");
+  expect(scenario.events()).toEqual(["steer", "deny:req-1", "deny:req-2"]);
+  expect(scenario.denials().map((denial) => denial.requestId)).toEqual(["req-1", "req-2"]);
+  for (const denial of scenario.denials()) {
+    expect(denial.message).toContain("message instead of approving");
+    // Interrupting is exactly what the release exists to avoid.
+    expect(denial.interrupt).toBeUndefined();
+  }
+  expect(scenario.pendingIds()).toEqual([]);
+});
+
+test("requests the provider opens one at a time are all denied", async () => {
+  // A turn that made several tool calls answers one request and immediately
+  // opens the next, so a single snapshot leaves the turn parked.
+  const scenario = createPermissionReleaseScenario(["req-1"], {
+    followUpRequestIds: ["req-2", "req-3"],
+  });
+
+  const result = await startAgentRun(
+    scenario.agentManager,
+    "agent-1",
+    "stop and answer me",
+    createTestLogger(),
+    { activeTurnBehavior: "steer", resolvePendingPermissions: true },
+  );
+
+  expect(result.disposition).toBe("steered");
+  expect(scenario.denials().map((denial) => denial.requestId)).toEqual(["req-1", "req-2", "req-3"]);
+  expect(scenario.pendingIds()).toEqual([]);
+});
+
+test("a request opened after the steer was read is left for the user", async () => {
+  // Once the provider has read the prompt it is acting on the user's message,
+  // so the next permission is a decision the user still owns.
+  const scenario = createPermissionReleaseScenario(["req-1"], {
+    followUpRequestIds: ["req-2"],
+    steerReadAfterDenials: 1,
+  });
+
+  const result = await startAgentRun(
+    scenario.agentManager,
+    "agent-1",
+    "stop and answer me",
+    createTestLogger(),
+    { activeTurnBehavior: "steer", resolvePendingPermissions: true },
+  );
+
+  expect(result.disposition).toBe("steered");
+  expect(scenario.denials().map((denial) => denial.requestId)).toEqual(["req-1"]);
+  expect(scenario.pendingIds()).toEqual(["req-2"]);
+});
+
+test("a request answered in the same instant does not stop the rest from being denied", async () => {
+  const scenario = createPermissionReleaseScenario(["req-1", "req-2", "req-3"], {
+    failingRequestIds: ["req-1"],
+  });
+
+  const result = await startAgentRun(
+    scenario.agentManager,
+    "agent-1",
+    "review the plan",
+    createTestLogger(),
+    { activeTurnBehavior: "steer", resolvePendingPermissions: true },
+  );
+
+  expect(result.disposition).toBe("steered");
+  expect(scenario.denials().map((denial) => denial.requestId)).toEqual(["req-2", "req-3"]);
+  expect(scenario.pendingIds()).toEqual([]);
+});
+
+test("a permission that survives the release fails the send instead of reporting a steer", async () => {
+  const scenario = createPermissionReleaseScenario(["req-1"], { stuckRequestIds: ["req-1"] });
+
+  await expect(
+    startAgentRun(scenario.agentManager, "agent-1", "review the plan", createTestLogger(), {
+      activeTurnBehavior: "steer",
+      resolvePendingPermissions: true,
+    }),
+  ).rejects.toThrow(/pending permission/i);
+});
+
+test("a replaced turn releases nothing: cancelation already denied the permissions", async () => {
+  const scenario = createPermissionReleaseScenario(["req-1"], { steerStatus: "replaced" });
+
+  const result = await startAgentRun(
+    scenario.agentManager,
+    "agent-1",
+    "review the plan",
+    createTestLogger(),
+    { activeTurnBehavior: "steer", resolvePendingPermissions: true },
+  );
+
+  expect(result.disposition).toBe("turn_started");
+  expect(scenario.denials()).toEqual([]);
+});
+
+test("an out-of-band prompt never answers a pending permission", async () => {
+  const scenario = createPermissionReleaseScenario(["req-1"]);
+  Reflect.set(scenario.agentManager, "tryRunOutOfBand", () => true);
+
+  const result = await startAgentRun(
+    scenario.agentManager,
+    "agent-1",
+    "/goal pause",
+    createTestLogger(),
+    { activeTurnBehavior: "steer", resolvePendingPermissions: true },
+  );
+
+  expect(result.disposition).toBe("out_of_band");
+  expect(scenario.denials()).toEqual([]);
+});
+
+test("system-injected prompts leave pending permissions for the human", async () => {
+  const scenario = createPermissionReleaseScenario(["req-1"]);
+
+  await startAgentRun(
+    scenario.agentManager,
+    "agent-1",
+    formatSystemNotificationPrompt("Agent child-agent finished."),
+    createTestLogger(),
+    { activeTurnBehavior: "steer" },
+  );
+
+  expect(scenario.denials()).toEqual([]);
+  expect(scenario.pendingIds()).toEqual(["req-1"]);
 });

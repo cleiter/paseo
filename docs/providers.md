@@ -85,6 +85,8 @@ Active-turn steering is an optional `AgentSession.steerActiveTurn` operation. Th
 
 A steering adapter also owes its interrupt: stopping a turn must discard the steers the provider has not read yet, or one of them resumes the turn the user just stopped. Codex clears pending input when it aborts a turn; Claude does not, so its adapter cancels the SDK messages it queued before calling `query.interrupt()`.
 
+A steer admitted while a permission is pending deadlocks on any provider whose permission prompt blocks the input stream. Claude's plan approval parks the SDK inside `canUseTool`, so the queued steer is never read and the turn never advances. The manager therefore denies every pending permission after the steer is admitted — after, so the prompt is already queued when the callback returns — and fails the send if any request survives the release. One pass is not enough: a turn that made several tool calls opens its next request within 10-300ms of the previous one being answered, so the manager keeps answering until `hasUnreadSteer` reports the prompt has been read. A parking adapter must implement that method, or a batch of tool permissions re-parks the turn after the first denial. It stops the moment the prompt is read, so a permission the agent asks for after acting on the message still reaches the user. Only user-originated prompts do this: a scheduled fire, a child-finished notification, or an agent-to-agent prompt must not answer a card the human is looking at. Provider adapters own the transcript consequence: a denied plan still records its `plan_approval` row, because the pending request is the only place the plan text lives.
+
 Rewind accepts the canonical wire `messageId` and resolves it to the provider identity before calling the adapter. A submitted prompt cannot be rewound until its provider echo supplies that identity.
 
 Submitted user-message wire items carry the same Paseo ID in `messageId` and `clientMessageId`. Provider adapters attach `clientMessageId` only to the echo for that foreground submission; provider history and externally initiated user rows do not have a Paseo client ID.
@@ -431,6 +433,7 @@ interface AgentSession {
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
+  hasUnreadSteer?(): boolean;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;

@@ -5549,3 +5549,64 @@ describe("Codex importable sessions", () => {
     ]);
   });
 });
+
+describe("Codex denied plan approvals", () => {
+  function planApprovalRows(events: AgentStreamEvent[]) {
+    return events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "plan_approval",
+    );
+  }
+
+  function createPlanSession(): { session: CodexTestSession; events: AgentStreamEvent[] } {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    castInternals<{ emitSyntheticPlanApprovalRequest: (planText: string) => void }>(
+      session,
+    ).emitSyntheticPlanApprovalRequest("Ship the thing");
+    return { session, events };
+  }
+
+  function pendingPlanRequestId(session: CodexTestSession): string {
+    const [request] = session.getPendingPermissions?.() ?? [];
+    if (!request) throw new Error("expected a pending plan permission");
+    return request.id;
+  }
+
+  test("answering the card with a denial records the plan decision", async () => {
+    const { session, events } = createPlanSession();
+    const requestId = pendingPlanRequestId(session);
+
+    await session.respondToPermission?.(requestId, {
+      behavior: "deny",
+      message: "The user answered with a message instead of approving.",
+    });
+
+    const [row] = planApprovalRows(events);
+    expect(row).toBeDefined();
+    expect((row as { item: { detail: unknown } }).item.detail).toMatchObject({
+      input: { plan: "Ship the thing" },
+      output: { approved: false },
+    });
+  });
+
+  test("a plan superseded by a new prompt records the same decision", () => {
+    const { session, events } = createPlanSession();
+
+    castInternals<{ dismissPendingPlanApprovals: (message: string) => void }>(
+      session,
+    ).dismissPendingPlanApprovals("Dismissed by a new prompt");
+
+    // dismissPendingPlanApprovals goes straight to resolvePlanPermission, so a
+    // row emitted from the response handler would miss this route entirely.
+    const [row] = planApprovalRows(events);
+    expect(row).toBeDefined();
+    expect((row as { item: { detail: unknown } }).item.detail).toMatchObject({
+      input: { plan: "Ship the thing" },
+      output: { approved: false },
+    });
+  });
+});

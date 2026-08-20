@@ -207,6 +207,9 @@ type ScheduleAgentManager = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
+  | "getPendingPermissions"
+  | "respondToPermission"
+  | "hasUnreadSteer"
 > &
   Pick<
     AgentManager,
