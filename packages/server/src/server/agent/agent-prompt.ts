@@ -49,10 +49,10 @@ async function steerOrReplaceActiveRun(
   if (options?.activeTurnBehavior !== "steer") {
     return null;
   }
-  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, {
-    ...options.runOptions,
-    clearPendingPermissions: options.clearPendingPermissions,
-  });
+  const steerOptions = options.clearPendingPermissions
+    ? { ...options.runOptions, clearPendingPermissions: true }
+    : options.runOptions;
+  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, steerOptions);
   if (result.status === "steered") {
     return { disposition: "steered" };
   }
