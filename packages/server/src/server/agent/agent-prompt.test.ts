@@ -540,6 +540,12 @@ interface PermissionReleaseScenarioOptions {
    * read. Defaults to reading it as soon as nothing is pending.
    */
   steerReadAfterDenials?: number;
+  /**
+   * A request the provider opens `afterMs` after the first denial, at the same
+   * moment it reports the steer as read — the shape of a permission the agent
+   * asks for *because* of the prompt, while the release loop is still polling.
+   */
+  lateFollowUp?: { id: string; afterMs: number };
 }
 
 interface PermissionReleaseScenario {
@@ -571,8 +577,16 @@ function createPermissionReleaseScenario(
   const events: string[] = [];
   const followUps = [...(options?.followUpRequestIds ?? [])];
   let denialCount = 0;
+  let lateFollowUpArrived = false;
 
   function hasUnreadSteer(): boolean {
+    if (lateFollowUpArrived) {
+      return false;
+    }
+    if (options?.lateFollowUp) {
+      // The steer stays unread until the agent reads it and opens that request.
+      return true;
+    }
     if (options?.steerReadAfterDenials !== undefined) {
       return denialCount < options.steerReadAfterDenials;
     }
@@ -602,6 +616,20 @@ function createPermissionReleaseScenario(
     respondToPermission: async (_agentId, requestId, response) => {
       events.push(`deny:${requestId}`);
       denialCount += 1;
+      const lateFollowUp = options?.lateFollowUp;
+      if (lateFollowUp && denialCount === 1) {
+        // Real time, because the loop polls in real time: the request has to
+        // land between two iterations, not inside one.
+        setTimeout(() => {
+          pending.set(lateFollowUp.id, {
+            id: lateFollowUp.id,
+            provider: "claude",
+            name: "Write",
+            kind: "tool",
+          } as AgentPermissionRequest);
+          lateFollowUpArrived = true;
+        }, lateFollowUp.afterMs);
+      }
       if (options?.failingRequestIds?.includes(requestId)) {
         // Mirrors the provider: a request the user answered in the same instant
         // is already gone, so the throw is stale-id noise, not a stuck turn.
@@ -686,6 +714,27 @@ test("a request opened after the steer was read is left for the user", async () 
   const scenario = createPermissionReleaseScenario(["req-1"], {
     followUpRequestIds: ["req-2"],
     steerReadAfterDenials: 1,
+  });
+
+  const result = await startAgentRun(
+    scenario.agentManager,
+    "agent-1",
+    "stop and answer me",
+    createTestLogger(),
+    { activeTurnBehavior: "steer", resolvePendingPermissions: true },
+  );
+
+  expect(result.disposition).toBe("steered");
+  expect(scenario.denials().map((denial) => denial.requestId)).toEqual(["req-1"]);
+  expect(scenario.pendingIds()).toEqual(["req-2"]);
+});
+
+test("a request the agent opens after it reads the prompt is left for the user", async () => {
+  // The agent reads the prompt during a poll interval and asks for a tool it
+  // needs to answer the message. Answering the pending set before re-checking
+  // would deny that request without the user ever seeing it.
+  const scenario = createPermissionReleaseScenario(["req-1"], {
+    lateFollowUp: { id: "req-2", afterMs: 40 },
   });
 
   const result = await startAgentRun(

@@ -130,7 +130,15 @@ async function releasePendingPermissions(
   }
   const deadline = Date.now() + RELEASE_TIMEOUT_MS;
   let emptySince: number | null = null;
+  let firstPass = true;
   for (;;) {
+    // Ask before answering anything, not only after. The agent can read the
+    // prompt during the poll interval and open a request *because* of it, and
+    // that request is the user's to answer. The first pass is exempt: a
+    // provider that does not report unread steers still gets one release.
+    if (!firstPass && !agentManager.hasUnreadSteer(agentId)) {
+      break;
+    }
     const pending = agentManager.getPendingPermissions(agentId);
     if (pending.length > 0) {
       emptySince = null;
@@ -149,12 +157,7 @@ async function releasePendingPermissions(
         break;
       }
     }
-    // The prompt is through, so anything the agent asks for from here on is a
-    // decision the user still owns. Providers that never park report no unread
-    // steer and leave on the first pass.
-    if (!agentManager.hasUnreadSteer(agentId)) {
-      break;
-    }
+    firstPass = false;
     if (Date.now() >= deadline) {
       break;
     }
