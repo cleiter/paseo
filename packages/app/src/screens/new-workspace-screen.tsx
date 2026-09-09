@@ -57,7 +57,6 @@ import {
 import { normalizeWorkspaceDescriptor, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
-import { useDraftStore } from "@/stores/draft-store";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
 import {
@@ -129,7 +128,10 @@ import {
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
 } from "./workspace/terminals/state";
-import { createWorkspaceAgentInBackground } from "./new-workspace/background-handoff";
+import {
+  captureWorkspaceDraftCleanup,
+  createWorkspaceAgentInBackground,
+} from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
@@ -762,7 +764,7 @@ function normalizeBranchDetails(
 type SubmitOutcome = "navigated" | "background";
 
 interface SubmitDraftInput {
-  draftVersionAtSubmit: number | undefined;
+  clearConsumedDraft: () => void;
   serverId: string;
   draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
@@ -943,7 +945,7 @@ function buildComposerInitialValues(input: {
 
 async function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
   const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
-  const draftVersionAtSubmit = useDraftStore.getState().drafts[input.draftKey]?.version;
+  const clearConsumedDraft = captureWorkspaceDraftCleanup(input);
   const { text, attachments, cwd } = payload;
   if (!composerState) {
     throw new Error(input.labels.composerStateRequired);
@@ -972,7 +974,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOu
     composerState,
   });
   return await submitWorkspaceDraft({
-    draftVersionAtSubmit,
+    clearConsumedDraft,
     serverId,
     clearDraft,
     draftKey: input.draftKey,
@@ -1082,11 +1084,7 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
   // screen's draft tab will never mount to issue create_agent, so this path does it instead.
   if (!input.isStillOnCreateScreen()) {
     await createWorkspaceAgentInBackground({
-      draftVersionAtSubmit: input.draftVersionAtSubmit,
-      draftId,
-      draftKey: input.draftKey,
-      clearDraft,
-      draftContextScopeKey: input.draftContextScopeKey,
+      clearConsumedDraft: input.clearConsumedDraft,
       createAgent: () =>
         requestWorkspaceDraftAgent(input.resolveClient(), {
           workspaceId,

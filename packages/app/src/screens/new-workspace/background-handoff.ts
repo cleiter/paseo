@@ -2,13 +2,37 @@ import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachment
 import { useDraftStore } from "@/stores/draft-store";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 
-export interface CreateWorkspaceAgentInBackgroundInput {
-  draftId: string;
+interface WorkspaceDraftCleanupInput {
+  draftId?: string;
   draftKey: string;
-  draftVersionAtSubmit: number | undefined;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftContextScopeKey: string | null;
-  createAgent: () => Promise<unknown>;
+}
+
+/** Capture ownership before workspace creation starts, not when its response arrives. */
+export function captureWorkspaceDraftCleanup(input: WorkspaceDraftCleanupInput): () => void {
+  const draftId = input.draftId?.trim() ?? "";
+  const scopeKey = input.draftContextScopeKey ?? "";
+  const draftVersion = useDraftStore.getState().drafts[input.draftKey]?.version;
+  const setup = useWorkspaceDraftSubmissionStore.getState().setupByDraftId[draftId];
+  const attachments = useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey];
+
+  return () => {
+    // These stores update independently. A context-only edit does not bump the text version.
+    // Any newer draft state owns the whole draft, including its unchanged context.
+    if (
+      useDraftStore.getState().drafts[input.draftKey]?.version !== draftVersion ||
+      useWorkspaceDraftSubmissionStore.getState().setupByDraftId[draftId] !== setup ||
+      useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey] !== attachments
+    ) {
+      return;
+    }
+    useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
+    if (scopeKey) {
+      useWorkspaceAttachmentsStore.getState().clearWorkspaceAttachments({ scopeKey });
+    }
+    input.clearDraft("sent");
+  };
 }
 
 /**
@@ -21,22 +45,10 @@ export interface CreateWorkspaceAgentInBackgroundInput {
  * path: those drive the draft tab's auto-submit, and the daemon does not dedupe create_agent by
  * clientMessageId, so a leftover entry would create a second agent when the workspace is opened.
  */
-export async function createWorkspaceAgentInBackground(
-  input: CreateWorkspaceAgentInBackgroundInput,
-): Promise<void> {
+export async function createWorkspaceAgentInBackground(input: {
+  clearConsumedDraft: () => void;
+  createAgent: () => Promise<unknown>;
+}): Promise<void> {
   await input.createAgent();
-
-  useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId: input.draftId });
-  if (input.draftContextScopeKey) {
-    useWorkspaceAttachmentsStore
-      .getState()
-      .clearWorkspaceAttachments({ scopeKey: input.draftContextScopeKey });
-  }
-  // Only on success — a failed creation has no pending-store handoff holding the prompt, so
-  // clearing would destroy the text needed to retry. And only if nothing else has written to the
-  // draft since: the New workspace draft key is shared, so the user may have reopened the screen
-  // and started typing something new while this was in flight.
-  if (useDraftStore.getState().drafts[input.draftKey]?.version === input.draftVersionAtSubmit) {
-    input.clearDraft("sent");
-  }
+  input.clearConsumedDraft();
 }
